@@ -1,0 +1,35 @@
+linters:
+  enable:
+    - bodyclose
+    - decorder
+    - errchkjson
+    - errname
+    - errorlint
+    - forcetypeassert
+    - gocritic
+    - wsl
+    - prealloc
+    - rowserrcheck
+    - sqlclosecheck
+    - unparam
+    - mirror
+    - unconvert
+    - usestdlibvars
+    - durationcheck
+    - stylecheck
+    - unparam
+    - testifylint
+
+linters-settings:
+  errchkjson:
+    check-error-free-encoding: true
+
+  errorlint:
+    errorf: false
+
+  govet:
+    enable:
+      - fieldalignment
+
+  testifylint:
+    enable-all: true
