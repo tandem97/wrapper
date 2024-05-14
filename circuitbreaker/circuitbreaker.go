@@ -65,7 +65,7 @@ func BreakerContext[T any](circuit CircuitContext[T], threshold int, backoff Bac
 
 		if err != nil {
 			if failures == math.MaxInt {
-				failures = threshold
+				failures = threshold + 1
 				return
 			}
 
