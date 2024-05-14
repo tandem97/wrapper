@@ -15,20 +15,14 @@ type innerFuture[T any] struct {
 	resCh <-chan T
 	errCh <-chan error
 
-	wg   sync.WaitGroup
 	once sync.Once
 }
 
 func (f *innerFuture[T]) Result() (T, error) {
 	f.once.Do(func() {
-		f.wg.Add(1)
-		defer f.wg.Done()
-
 		f.res = <-f.resCh
 		f.err = <-f.errCh
 	})
-
-	f.wg.Wait()
 
 	return f.res, f.err
 }
