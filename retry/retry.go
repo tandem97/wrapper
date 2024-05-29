@@ -3,17 +3,15 @@ package retry
 import (
 	"context"
 	"time"
+
+	"github.com/tandem97/wrapper/effector"
 )
-
-type EffectorContext[T any] func(context.Context) (T, error)
-
-type Effector[T any] func() (T, error)
 
 type Backoff interface {
 	Backoff() time.Duration
 }
 
-func Retry[T any](effector Effector[T], retries int, backoff Backoff) Effector[T] {
+func Retry[T any](effector effector.ValueError[T], retries int, backoff Backoff) effector.ValueError[T] {
 	f := func(context.Context) (T, error) {
 		return effector()
 	}
@@ -25,7 +23,7 @@ func Retry[T any](effector Effector[T], retries int, backoff Backoff) Effector[T
 	}
 }
 
-func RetryContext[T any](effector EffectorContext[T], retries int, backoff Backoff) EffectorContext[T] {
+func RetryContext[T any](effector effector.ValueErrorContext[T], retries int, backoff Backoff) effector.ValueErrorContext[T] {
 	return func(ctx context.Context) (res T, err error) {
 		for r := 0; ; r++ {
 			res, err = effector(ctx)

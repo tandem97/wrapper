@@ -4,18 +4,16 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/tandem97/wrapper/effector"
 )
-
-type CircuitContext[T any] func(context.Context) (T, error)
-
-type Circuit[T any] func() (T, error)
 
 type result[T any] struct {
 	res T
 	err error
 }
 
-func DebounceFirst[T any](circuit Circuit[T], d time.Duration) Circuit[T] {
+func DebounceFirst[T any](circuit effector.ValueError[T], d time.Duration) effector.ValueError[T] {
 	f := func(context.Context) (T, error) {
 		return circuit()
 	}
@@ -27,7 +25,7 @@ func DebounceFirst[T any](circuit Circuit[T], d time.Duration) Circuit[T] {
 	}
 }
 
-func DebounceFirstContext[T any](circuit CircuitContext[T], d time.Duration) CircuitContext[T] {
+func DebounceFirstContext[T any](circuit effector.ValueErrorContext[T], d time.Duration) effector.ValueErrorContext[T] {
 	var (
 		threshold time.Time
 		result    T
@@ -50,7 +48,7 @@ func DebounceFirstContext[T any](circuit CircuitContext[T], d time.Duration) Cir
 	}
 }
 
-func DebounceLast[T any](circuit Circuit[T], d time.Duration) Circuit[T] {
+func DebounceLast[T any](circuit effector.ValueError[T], d time.Duration) effector.ValueError[T] {
 	f := func(context.Context) (T, error) {
 		return circuit()
 	}
@@ -62,7 +60,7 @@ func DebounceLast[T any](circuit Circuit[T], d time.Duration) Circuit[T] {
 	}
 }
 
-func DebounceLastContext[T any](circuit CircuitContext[T], d time.Duration) CircuitContext[T] {
+func DebounceLastContext[T any](circuit effector.ValueErrorContext[T], d time.Duration) effector.ValueErrorContext[T] {
 	var (
 		mu     sync.RWMutex
 		timer  *time.Timer

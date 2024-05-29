@@ -1,17 +1,17 @@
 package timeout
 
-import "context"
+import (
+	"context"
 
-type Effector[T any] func() (T, error)
-
-type WithContext[T any] func(context.Context) (T, error)
+	"github.com/tandem97/wrapper/effector"
+)
 
 type result[T any] struct {
 	res T
 	err error
 }
 
-func Timeout[T any](f Effector[T]) WithContext[T] {
+func Timeout[T any](f effector.ValueError[T]) effector.ValueErrorContext[T] {
 	return func(ctx context.Context) (res T, err error) {
 		ch := make(chan result[T], 1)
 

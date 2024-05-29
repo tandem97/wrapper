@@ -6,11 +6,9 @@ import (
 	"math"
 	"sync"
 	"time"
+
+	"github.com/tandem97/wrapper/effector"
 )
-
-type Circuit[T any] func() (T, error)
-
-type CircuitContext[T any] func(context.Context) (T, error)
 
 type Backoff interface {
 	Backoff() time.Duration
@@ -19,7 +17,7 @@ type Backoff interface {
 
 var ErrServiceUnreachable = errors.New("service unreachable")
 
-func Breaker[T any](circuit Circuit[T], threshold int, backoff Backoff) Circuit[T] {
+func Breaker[T any](circuit effector.ValueError[T], threshold int, backoff Backoff) effector.ValueError[T] {
 	f := func(context.Context) (T, error) {
 		return circuit()
 	}
@@ -31,7 +29,7 @@ func Breaker[T any](circuit Circuit[T], threshold int, backoff Backoff) Circuit[
 	}
 }
 
-func BreakerContext[T any](circuit CircuitContext[T], threshold int, backoff Backoff) CircuitContext[T] {
+func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int, backoff Backoff) effector.ValueErrorContext[T] {
 	var (
 		failures int
 		last     = time.Now()

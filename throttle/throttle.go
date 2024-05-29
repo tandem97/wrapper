@@ -5,13 +5,38 @@ import (
 	"errors"
 	"sync"
 	"time"
-)
 
-type EffectorContext[T any] func(context.Context) (T, error)
+	"github.com/tandem97/wrapper/effector"
+)
 
 var ErrTooManyCalls = errors.New("too many calls")
 
-func ThrottleContext[T any](refillCtx context.Context, effector EffectorContext[T], max uint, refill uint, d time.Duration) EffectorContext[T] {
+func ThrottleVoid(refillCtx context.Context, effector effector.Void, max uint, refill uint, d time.Duration) effector.Void {
+	f := func(_ context.Context) (_ any, _ error) {
+		effector()
+		return
+	}
+
+	throttle := ThrottleContext(refillCtx, f, max, refill, d)
+
+	return func() {
+		_, _ = throttle(context.Background())
+	}
+}
+
+func Throttle[T any](refillCtx context.Context, effector effector.ValueError[T], max uint, refill uint, d time.Duration) effector.ValueError[T] {
+	f := func(_ context.Context) (T, error) {
+		return effector()
+	}
+
+	throttle := ThrottleContext(refillCtx, f, max, refill, d)
+
+	return func() (T, error) {
+		return throttle(context.Background())
+	}
+}
+
+func ThrottleContext[T any](refillCtx context.Context, effector effector.ValueErrorContext[T], max uint, refill uint, d time.Duration) effector.ValueErrorContext[T] {
 	var (
 		tokens = max
 		once   sync.Once
