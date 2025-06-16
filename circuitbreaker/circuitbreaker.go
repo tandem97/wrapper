@@ -31,9 +31,9 @@ func Breaker[T any](circuit effector.ValueError[T], threshold int, backoff Backo
 
 func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int, backoff Backoff) effector.ValueErrorContext[T] {
 	var (
-		failures int
-		last     = time.Now()
-		mu       sync.RWMutex
+		failures      int
+		shouldRetryAt time.Time
+		mu            sync.RWMutex
 	)
 
 	return func(ctx context.Context) (res T, err error) {
@@ -41,15 +41,12 @@ func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int,
 
 		d := failures - threshold
 
-		if d > 0 {
-			shouldRetryAt := last.Add(backoff.Backoff())
-			if !time.Now().After(shouldRetryAt) {
-				mu.RUnlock()
+		if d > 0 && time.Now().Before(shouldRetryAt) {
+			mu.RUnlock()
 
-				err = ErrServiceUnreachable
+			err = ErrServiceUnreachable
 
-				return
-			}
+			return
 		}
 
 		mu.RUnlock()
@@ -59,9 +56,9 @@ func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int,
 		mu.Lock()
 		defer mu.Unlock()
 
-		last = time.Now()
-
 		if err != nil {
+			shouldRetryAt = time.Now().Add(backoff.Backoff())
+
 			if failures == math.MaxInt {
 				failures = threshold + 1
 				return
