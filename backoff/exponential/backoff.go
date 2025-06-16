@@ -50,11 +50,11 @@ func (b *Backoff) Backoff() time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	backoff := b.backoff
-
-	if b.backoff > b.cap {
-		b.backoff = b.cap
+	if b.backoff >= b.cap {
+		return b.cap
 	}
+
+	backoff := b.backoff
 
 	b.backoff <<= 1
 
