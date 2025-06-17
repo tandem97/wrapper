@@ -16,7 +16,11 @@ func Hello() (string, error) {
 
 func main() {
 	wrappedHello := future.WrapSlowFunc(Hello)
-	res, _ := wrappedHello.Result()
 
-	log.Println(res)
+	go func() {
+		log.Println(wrappedHello())
+	}()
+
+	log.Println(wrappedHello())
+
 }
