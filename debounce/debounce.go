@@ -2,11 +2,14 @@ package debounce
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/tandem97/wrapper/effector"
 )
+
+var ErrDebounce = errors.New("debounce")
 
 type result[T any] struct {
 	res T
@@ -62,43 +65,37 @@ func DebounceLast[T any](circuit effector.ValueError[T], d time.Duration) effect
 
 func DebounceLastContext[T any](circuit effector.ValueErrorContext[T], d time.Duration) effector.ValueErrorContext[T] {
 	var (
-		mu     sync.RWMutex
+		mu     sync.Mutex
 		timer  *time.Timer
-		ctx    context.Context
-		cancel context.CancelFunc
+		cancel context.CancelCauseFunc
 	)
 
 	return func(parent context.Context) (res T, err error) {
-		mu.RLock()
-
-		if timer != nil {
-			timer.Stop()
-			cancel()
-		}
-
-		mu.RUnlock()
+		cCtx, cCancel := context.WithCancelCause(parent)
+		defer cCancel(nil)
 
 		mu.Lock()
 
-		ctx, cancel = context.WithCancel(parent)
+		if timer != nil {
+			timer.Stop()
+			cancel(ErrDebounce)
+		}
+
+		cancel = cCancel
 		ch := make(chan result[T], 1)
 		timer = time.AfterFunc(d, func() {
-			res, err := circuit(ctx)
+			res, err := circuit(cCtx)
 			ch <- result[T]{res: res, err: err}
 		})
 
 		mu.Unlock()
 
-		mu.RLock()
-
 		select {
 		case result := <-ch:
 			res, err = result.res, result.err
-		case <-ctx.Done():
-			err = ctx.Err()
+		case <-cCtx.Done():
+			err = context.Cause(cCtx)
 		}
-
-		mu.RUnlock()
 
 		return
 	}

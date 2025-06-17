@@ -1,3 +1,3 @@
 module github.com/tandem97/wrapper
 
-go 1.18
+go 1.20
