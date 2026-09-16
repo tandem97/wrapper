@@ -19,7 +19,7 @@ type Backoff struct {
 	cap        time.Duration
 	jitter     float64
 	multiplier float64
-	retries    int
+	tries      int
 	mu         sync.Mutex
 }
 
@@ -61,6 +61,22 @@ func New(opts ...opt) *Backoff {
 		opt(backoff)
 	}
 
+	if backoff.base <= 0 {
+		panic("exponentialwithjitter: base must be positive")
+	}
+
+	if backoff.cap <= 0 {
+		panic("exponentialwithjitter: cap must be positive")
+	}
+
+	if backoff.multiplier <= 0 {
+		panic("exponentialwithjitter: multiplier must be positive")
+	}
+
+	if backoff.jitter < 0 || backoff.jitter > 1 {
+		panic("exponentialwithjitter: jitter must be within [0, 1]")
+	}
+
 	return backoff
 }
 
@@ -68,10 +84,10 @@ func (b *Backoff) Backoff() time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	r := b.retries
+	r := b.tries
 
-	if b.retries != math.MaxInt {
-		b.retries++
+	if b.tries != math.MaxInt {
+		b.tries++
 	}
 
 	if r == 0 {
@@ -100,5 +116,5 @@ func (b *Backoff) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.retries = 0
+	b.tries = 0
 }

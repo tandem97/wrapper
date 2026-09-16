@@ -1,6 +1,7 @@
 package exponential
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -41,6 +42,14 @@ func New(opts ...opt) *Backoff {
 		opt(backoff)
 	}
 
+	if backoff.base <= 0 {
+		panic("exponential: base must be positive")
+	}
+
+	if backoff.cap <= 0 {
+		panic("exponential: cap must be positive")
+	}
+
 	backoff.backoff = backoff.base
 
 	return backoff
@@ -51,6 +60,10 @@ func (b *Backoff) Backoff() time.Duration {
 	defer b.mu.Unlock()
 
 	if b.backoff >= b.cap {
+		return b.cap
+	}
+
+	if b.backoff > math.MaxInt64/2 {
 		return b.cap
 	}
 
