@@ -12,12 +12,7 @@ import (
 var ErrTooManyCalls = errors.New("too many calls")
 
 func ThrottleVoid(refillCtx context.Context, effector effector.Void, max uint, refill uint, d time.Duration) effector.Void {
-	f := func(_ context.Context) (_ any, _ error) {
-		effector()
-		return
-	}
-
-	throttle := ThrottleContext(refillCtx, f, max, refill, d)
+	throttle := ThrottleContext(refillCtx, effector.ValueErrorContext(), max, refill, d)
 
 	return func() {
 		_, _ = throttle(context.Background())
@@ -25,11 +20,7 @@ func ThrottleVoid(refillCtx context.Context, effector effector.Void, max uint, r
 }
 
 func Throttle[T any](refillCtx context.Context, effector effector.ValueError[T], max uint, refill uint, d time.Duration) effector.ValueError[T] {
-	f := func(_ context.Context) (T, error) {
-		return effector()
-	}
-
-	throttle := ThrottleContext(refillCtx, f, max, refill, d)
+	throttle := ThrottleContext(refillCtx, effector.ValueErrorContext(), max, refill, d)
 
 	return func() (T, error) {
 		return throttle(context.Background())

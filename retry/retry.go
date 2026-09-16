@@ -12,11 +12,7 @@ type Backoff interface {
 }
 
 func Retry[T any](effector effector.ValueError[T], retries int, backoff Backoff) effector.ValueError[T] {
-	f := func(context.Context) (T, error) {
-		return effector()
-	}
-
-	retry := RetryContext(f, retries, backoff)
+	retry := RetryContext(effector.ValueErrorContext(), retries, backoff)
 
 	return func() (T, error) {
 		return retry(context.Background())

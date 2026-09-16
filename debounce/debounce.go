@@ -17,11 +17,7 @@ type result[T any] struct {
 }
 
 func DebounceFirst[T any](circuit effector.ValueError[T], d time.Duration) effector.ValueError[T] {
-	f := func(context.Context) (T, error) {
-		return circuit()
-	}
-
-	debounce := DebounceFirstContext(f, d)
+	debounce := DebounceFirstContext(circuit.ValueErrorContext(), d)
 
 	return func() (T, error) {
 		return debounce(context.Background())
@@ -52,11 +48,7 @@ func DebounceFirstContext[T any](circuit effector.ValueErrorContext[T], d time.D
 }
 
 func DebounceLast[T any](circuit effector.ValueError[T], d time.Duration) effector.ValueError[T] {
-	f := func(context.Context) (T, error) {
-		return circuit()
-	}
-
-	debounce := DebounceLastContext(f, d)
+	debounce := DebounceLastContext(circuit.ValueErrorContext(), d)
 
 	return func() (T, error) {
 		return debounce(context.Background())
