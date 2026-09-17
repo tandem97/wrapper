@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	MinBase     = time.Millisecond
 	DefaultBase = time.Second
 	DefaultCap  = 30 * time.Second
 )
@@ -18,21 +19,21 @@ type Backoff struct {
 	mu      sync.Mutex
 }
 
-type opt func(b *Backoff)
+type Opt func(b *Backoff)
 
-func WithBase(base time.Duration) opt {
+func WithBase(base time.Duration) Opt {
 	return func(b *Backoff) {
 		b.base = base
 	}
 }
 
-func WithCap(cap time.Duration) opt {
+func WithCap(cap time.Duration) Opt {
 	return func(b *Backoff) {
 		b.cap = cap
 	}
 }
 
-func New(opts ...opt) *Backoff {
+func New(opts ...Opt) *Backoff {
 	backoff := &Backoff{
 		base: DefaultBase,
 		cap:  DefaultCap,
@@ -42,8 +43,8 @@ func New(opts ...opt) *Backoff {
 		opt(backoff)
 	}
 
-	if backoff.base <= 0 {
-		panic("exponential: base must be positive")
+	if backoff.base < MinBase {
+		panic("exponential: base must be at least " + MinBase.String())
 	}
 
 	if backoff.cap <= 0 {
