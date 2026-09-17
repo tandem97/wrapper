@@ -20,6 +20,7 @@ type Backoff struct {
 	jitter     float64
 	multiplier float64
 	tries      int
+	rand       *rand.Rand
 	mu         sync.Mutex
 }
 
@@ -55,6 +56,7 @@ func New(opts ...opt) *Backoff {
 		cap:        DefaultCap,
 		multiplier: DefaultMultiplier,
 		jitter:     DefaultJitter,
+		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
 	for _, opt := range opts {
@@ -69,12 +71,16 @@ func New(opts ...opt) *Backoff {
 		panic("exponentialwithjitter: cap must be positive")
 	}
 
-	if backoff.multiplier <= 0 {
-		panic("exponentialwithjitter: multiplier must be positive")
+	if backoff.multiplier < 1 {
+		panic("exponentialwithjitter: multiplier must be greater than or equal to 1")
 	}
 
 	if backoff.jitter < 0 || backoff.jitter > 1 {
 		panic("exponentialwithjitter: jitter must be within [0, 1]")
+	}
+
+	if backoff.cap < backoff.base {
+		panic("exponentialwithjitter: cap must be greater than or equal to base")
 	}
 
 	return backoff
@@ -100,14 +106,7 @@ func (b *Backoff) Backoff() time.Duration {
 		r--
 	}
 
-	if backoff > max {
-		backoff = max
-	}
-
-	backoff *= 1 + b.jitter*(rand.Float64()*2-1)
-	if backoff < 0 {
-		return 0
-	}
+	backoff = math.Min(backoff, max) * (1 + b.jitter*(b.rand.Float64()*2-1))
 
 	return time.Duration(backoff)
 }

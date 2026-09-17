@@ -14,6 +14,7 @@ const (
 type Backoff struct {
 	base    time.Duration
 	cap     time.Duration
+	
 	backoff time.Duration
 	mu      sync.Mutex
 }
@@ -48,6 +49,10 @@ func New(opts ...opt) *Backoff {
 
 	if backoff.cap <= 0 {
 		panic("exponential: cap must be positive")
+	}
+
+	if backoff.cap < backoff.base {
+		panic("exponential: cap must be greater than or equal to base")
 	}
 
 	backoff.backoff = backoff.base
