@@ -1,3 +1,14 @@
+// Package circuitbreaker provides a circuit breaker that wraps a function
+// and stops calling it while it keeps failing.
+//
+// The breaker counts consecutive failures of the wrapped circuit. Once
+// threshold failures happen in a row, the breaker opens: every following
+// call fails fast with ErrServiceUnreachable without invoking the circuit
+// until the delay returned by the configured Backoff has elapsed. After
+// that the breaker allows a single probe request through (the half-open
+// state). If the probe succeeds, the failure counter and the backoff are
+// reset and normal calls resume; if it fails, the breaker opens again for
+// the next backoff delay.
 package circuitbreaker
 
 import (
@@ -11,12 +22,22 @@ import (
 )
 
 type Backoff interface {
+	// Backoff returns the delay until the next probe is allowed
 	Backoff() time.Duration
+
+	// Reset restarts the sequence so that the next Backoff call returns
+	// the initial delay.
 	Reset()
 }
 
+// ErrServiceUnreachable is returned by an open breaker instead of calling
+// the wrapped circuit.
 var ErrServiceUnreachable = errors.New("service unreachable")
 
+// Breaker wraps circuit with a circuit breaker and returns a function with
+// the same signature. The returned function may be called concurrently.
+//
+// It panics if threshold is negative.
 func Breaker[T any](circuit effector.ValueError[T], threshold int, backoff Backoff) effector.ValueError[T] {
 	breaker := BreakerContext(circuit.ValueErrorContext(), threshold, backoff)
 
@@ -25,42 +46,68 @@ func Breaker[T any](circuit effector.ValueError[T], threshold int, backoff Backo
 	}
 }
 
+// BreakerContext is like Breaker but wraps a context-aware circuit. The
+// provided context is passed through to the circuit on every call.
+//
+// It panics if threshold is negative.
 func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int, backoff Backoff) effector.ValueErrorContext[T] {
+	if threshold < 0 {
+		panic("circuitbreaker: threshold must be non-negative")
+	}
+
 	var (
 		failures      int
 		shouldRetryAt time.Time
-		mu            sync.RWMutex
+		probing       bool
+		mu            sync.Mutex
 	)
 
 	return func(ctx context.Context) (res T, err error) {
-		mu.RLock()
+		mu.Lock()
 
-		d := failures - threshold
-
-		if d > 0 && time.Now().Before(shouldRetryAt) {
-			mu.RUnlock()
+		if time.Now().Before(shouldRetryAt) {
+			mu.Unlock()
 
 			err = ErrServiceUnreachable
 
 			return
 		}
 
-		mu.RUnlock()
+		if failures >= threshold {
+			if probing {
+				mu.Unlock()
+
+				err = ErrServiceUnreachable
+
+				return
+			}
+
+			probing = true
+		}
+
+		mu.Unlock()
 
 		res, err = circuit(ctx)
 
 		mu.Lock()
 		defer mu.Unlock()
 
-		if err != nil {
-			shouldRetryAt = time.Now().Add(backoff.Backoff())
+		probing = false
 
-			if failures == math.MaxInt {
-				failures = threshold + 1
+		if err != nil {
+			if failures != math.MaxInt {
+				failures++
+			}
+
+			if failures-threshold < 0 {
 				return
 			}
 
-			failures++
+			if time.Now().Before(shouldRetryAt) {
+				return
+			}
+
+			shouldRetryAt = time.Now().Add(backoff.Backoff())
 
 			return
 		}
