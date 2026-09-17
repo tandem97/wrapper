@@ -96,10 +96,6 @@ func (b *Backoff) Backoff() time.Duration {
 		b.tries++
 	}
 
-	if r == 0 {
-		return b.base
-	}
-
 	backoff, max := float64(b.base), float64(b.cap)
 	for backoff < max && r > 0 {
 		backoff *= b.multiplier

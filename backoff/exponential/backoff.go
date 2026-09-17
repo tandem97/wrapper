@@ -14,7 +14,6 @@ const (
 type Backoff struct {
 	base    time.Duration
 	cap     time.Duration
-	
 	backoff time.Duration
 	mu      sync.Mutex
 }
