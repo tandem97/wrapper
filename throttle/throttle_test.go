@@ -143,22 +143,6 @@ func TestThrottleStopsRefillOnCancellation(t *testing.T) {
 	}
 }
 
-func TestThrottleVoid(t *testing.T) {
-	var calls int
-
-	refillCtx, stop := context.WithCancel(context.Background())
-	defer stop()
-
-	throttled := ThrottleVoid(refillCtx, func() { calls++ }, 1, 1, time.Hour)
-
-	throttled()
-	throttled()
-
-	if calls != 1 {
-		t.Fatalf("effector invoked %d times, want 1", calls)
-	}
-}
-
 func TestThrottlePanicsOnInvalidArgs(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -20,17 +20,6 @@ import (
 // is throttled.
 var ErrTooManyCalls = errors.New("too many calls")
 
-// ThrottleVoid returns a throttled wrapper around effector: at most max
-// calls pass through per refill period, further calls are dropped without
-// invoking effector. The result of the wrapped circuit is discarded.
-func ThrottleVoid(refillCtx context.Context, effector effector.Void, max uint, refill uint, d time.Duration) effector.Void {
-	throttle := ThrottleContext(refillCtx, effector.ValueErrorContext(), max, refill, d)
-
-	return func() {
-		_, _ = throttle(context.Background())
-	}
-}
-
 // Throttle returns a throttled wrapper around effector: at most max calls
 // pass through per refill period, further calls return ErrTooManyCalls
 // without invoking the circuit.
