@@ -13,7 +13,7 @@ type fixedBackoff time.Duration
 func (b fixedBackoff) Backoff() time.Duration { return time.Duration(b) }
 func (b fixedBackoff) Reset()                 {}
 
-func Example() {
+func ExampleBreaker() {
 	var calls int
 
 	circuit := func() (string, error) {

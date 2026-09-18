@@ -21,6 +21,8 @@ import (
 	"github.com/tandem97/wrapper/effector"
 )
 
+// Backoff supplies delays between failed attempts and can be restarted
+// with Reset after a successful probe.
 type Backoff interface {
 	// Backoff returns the delay until the next probe is allowed
 	Backoff() time.Duration
@@ -49,7 +51,8 @@ func Breaker[T any](circuit effector.ValueError[T], threshold int, backoff Backo
 // BreakerContext is like Breaker but wraps a context-aware circuit. The
 // provided context is passed through to the circuit on every call.
 //
-// It panics if threshold is negative.
+// It panics if threshold is negative. A threshold of 0 opens the breaker
+// after the first failure.
 func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int, backoff Backoff) effector.ValueErrorContext[T] {
 	if threshold < 0 {
 		panic("circuitbreaker: threshold must be non-negative")
@@ -99,7 +102,7 @@ func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int,
 				failures++
 			}
 
-			if failures-threshold < 0 {
+			if failures < threshold {
 				return
 			}
 
