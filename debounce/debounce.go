@@ -57,12 +57,23 @@ func DebounceFirstContext[T any](circuit effector.ValueErrorContext[T], d time.D
 
 	return func(ctx context.Context) (T, error) {
 		var (
-			shouldCall bool          = false
-			doneCh     chan struct{} = nil
+			shouldCall bool
+			doneCh     chan struct{}
 		)
 
+		mu.RLock()
+
+		if time.Now().Before(threshold) {
+			defer mu.RUnlock()
+
+			return result, err
+		}
+
+		mu.RUnlock()
 		mu.Lock()
 
+		// Re-check under the write lock: another caller may have started
+		// a new window while we were waiting for the lock.
 		if time.Now().Before(threshold) {
 			defer mu.Unlock()
 
