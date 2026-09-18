@@ -7,7 +7,7 @@ import (
 	"github.com/tandem97/wrapper/backoff/exponential"
 )
 
-func Example() {
+func ExampleBackoff() {
 	backoff := exponential.New(
 		exponential.WithBase(10*time.Millisecond),
 		exponential.WithCap(40*time.Millisecond),

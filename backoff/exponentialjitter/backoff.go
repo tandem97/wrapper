@@ -42,7 +42,8 @@ type Backoff struct {
 	cap        time.Duration
 	jitter     float64
 	multiplier float64
-	tries      int
+	current    float64 // current un-jittered delay level, in nanoseconds
+	reachedCap bool
 	rand       *rand.Rand
 	mu         sync.Mutex
 }
@@ -70,7 +71,8 @@ func WithCap(cap time.Duration) Opt {
 }
 
 // WithMultiplier sets the factor by which the delay grows on every call.
-// multiplier must be greater than or equal to 1, otherwise New panics.
+// multiplier must be finite and greater than or equal to 1, otherwise
+// New panics.
 func WithMultiplier(multiplier float64) Opt {
 	return func(b *Backoff) {
 		b.multiplier = multiplier
@@ -79,7 +81,8 @@ func WithMultiplier(multiplier float64) Opt {
 
 // WithJitter sets the amplitude of the random spread applied to each
 // delay. With jitter j, the returned delay is multiplied by a random
-// factor in [1-j, 1+j). jitter must be within [0, 1], otherwise New
+// factor in [1-j, 1+j). With jitter 1 the factor can be 0, so the
+// returned delay may be 0. jitter must be within [0, 1], otherwise New
 // panics.
 func WithJitter(jitter float64) Opt {
 	return func(b *Backoff) {
@@ -91,15 +94,15 @@ func WithJitter(jitter float64) Opt {
 //
 // It panics if the resulting configuration is invalid: base must be at
 // least MinBase, cap must be positive and greater than or equal to base,
-// multiplier must be greater than or equal to 1, and jitter must be
-// within [0, 1].
+// multiplier must be finite and greater than or equal to 1, and jitter
+// must be within [0, 1].
 func New(opts ...Opt) *Backoff {
 	backoff := &Backoff{
 		base:       DefaultBase,
 		cap:        DefaultCap,
 		multiplier: DefaultMultiplier,
 		jitter:     DefaultJitter,
-		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
+		rand:       rand.New(rand.NewSource(rand.Int63())),
 	}
 
 	for _, opt := range opts {
@@ -114,17 +117,19 @@ func New(opts ...Opt) *Backoff {
 		panic("exponentialjitter: cap must be positive")
 	}
 
-	if backoff.multiplier < 1 {
-		panic("exponentialjitter: multiplier must be greater than or equal to 1")
+	if math.IsNaN(backoff.multiplier) || math.IsInf(backoff.multiplier, 0) || backoff.multiplier < 1 {
+		panic("exponentialjitter: multiplier must be finite and greater than or equal to 1")
 	}
 
-	if backoff.jitter < 0 || backoff.jitter > 1 {
+	if math.IsNaN(backoff.jitter) || backoff.jitter < 0 || backoff.jitter > 1 {
 		panic("exponentialjitter: jitter must be within [0, 1]")
 	}
 
 	if backoff.cap < backoff.base {
 		panic("exponentialjitter: cap must be greater than or equal to base")
 	}
+
+	backoff.current = float64(backoff.base)
 
 	return backoff
 }
@@ -138,21 +143,21 @@ func (b *Backoff) Backoff() time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	r := b.tries
+	level := b.current
 
-	if b.tries != math.MaxInt {
-		b.tries++
+	if !b.reachedCap {
+		next := level * b.multiplier
+		if next >= float64(b.cap) {
+			b.current = float64(b.cap)
+			b.reachedCap = true
+		} else {
+			b.current = next
+		}
 	}
 
-	backoff, max := float64(b.base), float64(b.cap)
-	for backoff < max && r > 0 {
-		backoff *= b.multiplier
-		r--
-	}
+	backoff := level * (1 + b.jitter*(b.rand.Float64()*2-1))
 
-	backoff = math.Min(backoff, max) * (1 + b.jitter*(b.rand.Float64()*2-1))
-
-	return time.Duration(backoff)
+	return saturatingDuration(backoff)
 }
 
 // Reset restarts the sequence so that the next call to Backoff returns
@@ -161,5 +166,19 @@ func (b *Backoff) Reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	b.tries = 0
+	b.current = float64(b.base)
+	b.reachedCap = false
+}
+
+// saturatingDuration converts f nanoseconds to a time.Duration, clamping
+// the result to [0, math.MaxInt64].
+func saturatingDuration(f float64) time.Duration {
+	switch {
+	case math.IsNaN(f) || f <= 0:
+		return 0
+	case f >= math.MaxInt64:
+		return time.Duration(math.MaxInt64)
+	default:
+		return time.Duration(f)
+	}
 }

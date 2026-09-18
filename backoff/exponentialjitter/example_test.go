@@ -7,7 +7,7 @@ import (
 	"github.com/tandem97/wrapper/backoff/exponentialjitter"
 )
 
-func Example() {
+func ExampleBackoff() {
 	backoff := exponentialjitter.New(
 		exponentialjitter.WithBase(100*time.Millisecond),
 		exponentialjitter.WithCap(2*time.Second),

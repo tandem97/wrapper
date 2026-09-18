@@ -7,7 +7,6 @@
 package exponential
 
 import (
-	"math"
 	"sync"
 	"time"
 )
@@ -94,17 +93,22 @@ func (b *Backoff) Backoff() time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.backoff >= b.cap {
-		return b.cap
-	}
-
-	if b.backoff > math.MaxInt64/2 {
-		return b.cap
-	}
-
 	backoff := b.backoff
+	if backoff >= b.cap {
+		return b.cap
+	}
 
-	b.backoff <<= 1
+	next := backoff << 1
+
+	// If the doubling overflows int64 (next < backoff for positive
+	// values) or overshoots cap, the sequence has saturated: pin the
+	// state at cap and still return the last representable value
+	// instead of cap.
+	if next < backoff || next >= b.cap {
+		b.backoff = b.cap
+	} else {
+		b.backoff = next
+	}
 
 	return backoff
 }
