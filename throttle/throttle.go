@@ -28,6 +28,18 @@ func Throttle[T any](refillCtx context.Context, effector effector.ValueError[T],
 }
 
 func ThrottleContext[T any](refillCtx context.Context, effector effector.ValueErrorContext[T], max uint, refill uint, d time.Duration) effector.ValueErrorContext[T] {
+	if d <= 0 {
+		panic("throttle: d must be positive")
+	}
+
+	if max == 0 {
+		panic("throttle: max must be greater than zero")
+	}
+
+	if refill == 0 {
+		panic("throttle: refill must be greater than zero")
+	}
+
 	var (
 		tokens = max
 		once   sync.Once
