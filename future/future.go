@@ -8,19 +8,24 @@ import (
 	"github.com/tandem97/wrapper/effector"
 )
 
+// result carries the outcome of the wrapped function over a single
+// channel.
+type result[T any] struct {
+	res T
+	err error
+}
+
 // WrapSlowFunc returns a wrapper around f that starts f immediately in a
 // background goroutine and caches its (T, error) result. The first call
 // blocks until f returns; subsequent calls return the cached result
 // without re-invoking f.
 func WrapSlowFunc[T any](f effector.ValueError[T]) effector.ValueError[T] {
-	resCh := make(chan T, 1)
-	errCh := make(chan error, 1)
+	resultCh := make(chan result[T], 1)
 
 	go func() {
 		res, err := f()
 
-		resCh <- res
-		errCh <- err
+		resultCh <- result[T]{res: res, err: err}
 	}()
 
 	var (
@@ -31,8 +36,9 @@ func WrapSlowFunc[T any](f effector.ValueError[T]) effector.ValueError[T] {
 
 	return func() (T, error) {
 		once.Do(func() {
-			res = <-resCh
-			err = <-errCh
+			r := <-resultCh
+
+			res, err = r.res, r.err
 		})
 
 		return res, err
