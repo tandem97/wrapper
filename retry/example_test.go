@@ -59,6 +59,6 @@ func ExampleRetryContext() {
 	fmt.Println("error:", err)
 
 	// Output:
-	// attempts: 1
+	// attempts: 0
 	// error: context canceled
 }

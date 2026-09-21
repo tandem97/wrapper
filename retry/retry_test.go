@@ -3,8 +3,11 @@ package retry
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/tandem97/wrapper/backoff/exponential"
 )
 
 // stubBackoff is a scripted Backoff implementation for tests.
@@ -170,5 +173,91 @@ func TestRetryPanicsOnNonPositiveRetries(t *testing.T) {
 
 			Retry(func() (int, error) { return 0, nil }, retries, backoff)
 		}()
+	}
+}
+
+func TestRetryContextPassesContext(t *testing.T) {
+	got := make(chan context.Context, 1)
+
+	eff := func(ctx context.Context) (int, error) {
+		got <- ctx
+
+		return 1, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	retrier := RetryContext(eff, 3, &stubBackoff{delays: []time.Duration{time.Microsecond}})
+
+	if _, err := retrier(ctx); err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+
+	if c := <-got; c != ctx {
+		t.Fatal("effector did not receive the provided context")
+	}
+}
+
+func TestRetryContextCancelledBeforeCall(t *testing.T) {
+	var calls int
+
+	eff := func(context.Context) (int, error) {
+		calls++
+
+		return 1, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	retrier := RetryContext(eff, 3, &stubBackoff{delays: []time.Duration{time.Microsecond}})
+
+	_, err := retrier(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("effector invoked %d times, want 0", calls)
+	}
+}
+
+func TestRetryConcurrent(t *testing.T) {
+	var calls int
+	var mu sync.Mutex
+
+	eff := func() (int, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+
+		return 1, nil
+	}
+
+	retrier := Retry(eff, 3, exponential.New(exponential.WithBase(time.Millisecond)))
+
+	const goroutines = 16
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			res, err := retrier()
+			if err != nil || res != 1 {
+				t.Errorf("got (%v, %v), want (1, nil)", res, err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if calls != goroutines {
+		t.Fatalf("effector invoked %d times, want %d", calls, goroutines)
 	}
 }
