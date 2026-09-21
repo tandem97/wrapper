@@ -131,3 +131,13 @@ func TestBackoffConcurrent(t *testing.T) {
 		t.Fatalf("after concurrent use and reset: got %v, want %v", got, want)
 	}
 }
+
+func TestBackoffBaseEqualsCap(t *testing.T) {
+	b := New(WithBase(10*time.Millisecond), WithCap(10*time.Millisecond))
+
+	for i := 0; i < 3; i++ {
+		if got := b.Backoff(); got != 10*time.Millisecond {
+			t.Fatalf("call %d: got %v, want 10ms", i+1, got)
+		}
+	}
+}

@@ -136,3 +136,91 @@ func TestBackoffConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestBackoffJitterBoundsStrict(t *testing.T) {
+	b := New(
+		WithBase(100*time.Millisecond),
+		WithCap(200*time.Millisecond),
+		WithMultiplier(1),
+		WithJitter(0.2),
+	)
+
+	const (
+		minDelay = 80 * time.Millisecond  // base * (1 - jitter)
+		maxDelay = 120 * time.Millisecond // base * (1 + jitter)
+	)
+
+	for i := 0; i < 1000; i++ {
+		d := b.Backoff()
+		if d < minDelay || d > maxDelay {
+			t.Fatalf("delay %v out of [%v, %v]", d, minDelay, maxDelay)
+		}
+	}
+}
+
+func TestBackoffResetAfterCap(t *testing.T) {
+	b := New(
+		WithBase(100*time.Millisecond),
+		WithCap(150*time.Millisecond),
+		WithMultiplier(2),
+		WithJitter(0),
+	)
+
+	// 100ms, then capped at 150ms forever.
+	b.Backoff()
+	b.Backoff()
+	b.Backoff()
+
+	b.Reset()
+
+	if got, want := b.Backoff(), 100*time.Millisecond; got != want {
+		t.Fatalf("after reset: got %v, want %v", got, want)
+	}
+}
+
+func TestBackoffDeterministicWithSeed(t *testing.T) {
+	newBackoff := func() *Backoff {
+		return New(
+			WithBase(100*time.Millisecond),
+			WithCap(2*time.Second),
+			WithMultiplier(2),
+			WithJitter(0.5),
+			WithSeed(42),
+		)
+	}
+
+	a, b := newBackoff(), newBackoff()
+
+	for i := 0; i < 100; i++ {
+		if da, db := a.Backoff(), b.Backoff(); da != db {
+			t.Fatalf("call %d: got %v and %v, want equal", i+1, da, db)
+		}
+	}
+}
+
+func TestBackoffDifferentSeeds(t *testing.T) {
+	newBackoff := func(seed int64) *Backoff {
+		return New(
+			WithBase(100*time.Millisecond),
+			WithCap(2*time.Second),
+			WithMultiplier(2),
+			WithJitter(0.5),
+			WithSeed(seed),
+		)
+	}
+
+	a, b := newBackoff(1), newBackoff(2)
+
+	different := false
+	for i := 0; i < 100; i++ {
+		if a.Backoff() != b.Backoff() {
+			different = true
+
+			break
+		}
+	}
+
+	if !different {
+		t.Fatal("sequences with different seeds are identical")
+	}
+}

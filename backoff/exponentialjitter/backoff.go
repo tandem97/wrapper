@@ -90,6 +90,15 @@ func WithJitter(jitter float64) Opt {
 	}
 }
 
+// WithSeed sets the seed of the internal random source, making the
+// generated delays deterministic for a given configuration. By default
+// the generator is seeded randomly.
+func WithSeed(seed int64) Opt {
+	return func(b *Backoff) {
+		b.rand = rand.New(rand.NewSource(seed))
+	}
+}
+
 // New creates a Backoff generator from the given options.
 //
 // It panics if the resulting configuration is invalid: base must be at
@@ -135,8 +144,10 @@ func New(opts ...Opt) *Backoff {
 }
 
 // Backoff returns the next delay. The base is multiplied by multiplier
-// on every call, capped at cap, and then randomized by a random factor
-// in [1-jitter, 1+jitter). Jitter is applied to the first delay too.
+// on every call until cap is reached, and the result is then randomized
+// by a random factor in [1-jitter, 1+jitter). After cap is reached the
+// jitter is applied to cap, so delays may reach up to cap*(1+jitter).
+// Jitter is applied to the first delay too.
 //
 // Backoff is safe for concurrent use.
 func (b *Backoff) Backoff() time.Duration {
