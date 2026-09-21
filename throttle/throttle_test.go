@@ -170,3 +170,74 @@ func TestThrottlePanicsOnInvalidArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestThrottleSaturatesAtMax(t *testing.T) {
+	var calls int
+
+	circuit := func() (int, error) {
+		calls++
+
+		return 1, nil
+	}
+
+	refillCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	// refill (5) exceeds max (2): the bucket must saturate at max.
+	throttled := Throttle(refillCtx, circuit, 2, 5, 10*time.Millisecond)
+
+	// Drain the bucket.
+	for i := 0; i < 2; i++ {
+		if _, err := throttled(); err != nil {
+			t.Fatalf("call %d: unexpected error %v", i+1, err)
+		}
+	}
+
+	if _, err := throttled(); !errors.Is(err, ErrTooManyCalls) {
+		t.Fatalf("expected ErrTooManyCalls, got %v", err)
+	}
+
+	// After several refill periods the bucket is full again with exactly
+	// max tokens, not overflowing to refill.
+	time.Sleep(50 * time.Millisecond)
+
+	for i := 0; i < 2; i++ {
+		if _, err := throttled(); err != nil {
+			t.Fatalf("call %d after refill: unexpected error %v", i+1, err)
+		}
+	}
+
+	if _, err := throttled(); !errors.Is(err, ErrTooManyCalls) {
+		t.Fatalf("expected ErrTooManyCalls, got %v", err)
+	}
+
+	if calls != 4 {
+		t.Fatalf("effector invoked %d times, want 4", calls)
+	}
+}
+
+func TestThrottleContextPassesContext(t *testing.T) {
+	got := make(chan context.Context, 1)
+
+	circuit := func(ctx context.Context) (int, error) {
+		got <- ctx
+
+		return 1, nil
+	}
+
+	refillCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	throttled := ThrottleContext(refillCtx, circuit, 1, 1, time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if _, err := throttled(ctx); err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+
+	if c := <-got; c != ctx {
+		t.Fatal("effector did not receive the provided context")
+	}
+}

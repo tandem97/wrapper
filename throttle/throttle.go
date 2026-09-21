@@ -20,9 +20,10 @@ import (
 // is throttled.
 var ErrTooManyCalls = errors.New("too many calls")
 
-// Throttle returns a throttled wrapper around effector: at most max calls
-// pass through per refill period, further calls return ErrTooManyCalls
-// without invoking the circuit.
+// Throttle returns a throttled wrapper around effector: the bucket starts
+// full with max tokens, refill tokens are added every d up to max, and
+// calls that find the bucket empty return ErrTooManyCalls without
+// invoking the circuit.
 func Throttle[T any](refillCtx context.Context, effector effector.ValueError[T], max uint, refill uint, d time.Duration) effector.ValueError[T] {
 	throttle := ThrottleContext(refillCtx, effector.ValueErrorContext(), max, refill, d)
 
@@ -32,10 +33,10 @@ func Throttle[T any](refillCtx context.Context, effector effector.ValueError[T],
 }
 
 // ThrottleContext returns a context-aware throttled wrapper around
-// effector: at most max calls pass through per refill period, further
-// calls return ErrTooManyCalls without invoking the circuit. The bucket
-// is refilled by refill tokens every d by a background goroutine that
-// stops when refillCtx is cancelled.
+// effector: the bucket starts full with max tokens, refill tokens are
+// added every d up to max, and calls that find the bucket empty return
+// ErrTooManyCalls without invoking the circuit. The bucket is refilled by
+// a background goroutine that stops when refillCtx is cancelled.
 //
 // It panics if d is not positive or if max or refill is zero.
 func ThrottleContext[T any](refillCtx context.Context, effector effector.ValueErrorContext[T], max uint, refill uint, d time.Duration) effector.ValueErrorContext[T] {
