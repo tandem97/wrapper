@@ -9,6 +9,11 @@
 // state). If the probe succeeds, the failure counter and the backoff are
 // reset and normal calls resume; if it fails, the breaker opens again for
 // the next backoff delay.
+//
+// Context errors (context.Canceled and context.DeadlineExceeded) returned
+// by the circuit are passed through to the caller but are not counted as
+// failures: they mean the caller cancelled the call, not that the circuit
+// is down.
 package circuitbreaker
 
 import (
@@ -52,7 +57,8 @@ func Breaker[T any](circuit effector.ValueError[T], threshold int, backoff Backo
 // provided context is passed through to the circuit on every call.
 //
 // It panics if threshold is negative. A threshold of 0 opens the breaker
-// after the first failure.
+// after the first failure. Context errors returned by the circuit are
+// passed through to the caller but are not counted as failures.
 func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int, backoff Backoff) effector.ValueErrorContext[T] {
 	if threshold < 0 {
 		panic("circuitbreaker: threshold must be non-negative")
@@ -98,6 +104,13 @@ func BreakerContext[T any](circuit effector.ValueErrorContext[T], threshold int,
 		probing = false
 
 		if err != nil {
+			// A context error means the caller cancelled the call, not
+			// that the circuit failed: do not count it as a failure, so
+			// caller cancellations cannot open the breaker.
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return
+			}
+
 			if failures != math.MaxInt {
 				failures++
 			}
