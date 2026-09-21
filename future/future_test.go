@@ -1,6 +1,7 @@
 package future
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -124,5 +125,89 @@ func TestWrapSlowFuncCachesError(t *testing.T) {
 		if !errors.Is(err, boom) {
 			t.Fatalf("call %d: expected boom, got %v", i+1, err)
 		}
+	}
+}
+
+func TestWrapSlowFuncStartsImmediately(t *testing.T) {
+	started := make(chan struct{})
+
+	f := func() (int, error) {
+		close(started)
+
+		return 1, nil
+	}
+
+	_ = WrapSlowFunc(f)
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("f was not started immediately")
+	}
+}
+
+func TestWrapSlowFuncContextCancellation(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	f := func() (int, error) {
+		close(started)
+
+		<-release
+
+		return 42, nil
+	}
+
+	wrapped := WrapSlowFuncContext(f)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+
+		_, err := wrapped(ctx)
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("got %v, want context.Canceled", err)
+		}
+	}()
+
+	<-started
+	cancel()
+	<-done
+
+	close(release)
+}
+
+func TestWrapSlowFuncContextResultCachedAfterCancellation(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	f := func() (int, error) {
+		close(started)
+
+		<-release
+
+		return 42, nil
+	}
+
+	wrapped := WrapSlowFuncContext(f)
+
+	// A cancelled caller does not block.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := wrapped(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+
+	<-started
+	close(release)
+
+	// A later caller gets the cached result.
+	res, err := wrapped(context.Background())
+	if err != nil || res != 42 {
+		t.Fatalf("got (%v, %v), want (42, nil)", res, err)
 	}
 }
