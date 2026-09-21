@@ -215,3 +215,197 @@ func TestDebounceLastPanicsOnNonPositive(t *testing.T) {
 
 	DebounceLast(func() (int, error) { return 0, nil }, -time.Second)
 }
+
+func TestDebounceFirstCachesError(t *testing.T) {
+	boom := errors.New("boom")
+	var calls int
+
+	circuit := func() (int, error) {
+		calls++
+
+		return 0, boom
+	}
+
+	d := DebounceFirst(circuit, 50*time.Millisecond)
+
+	for i := 0; i < 3; i++ {
+		_, err := d()
+		if !errors.Is(err, boom) {
+			t.Fatalf("call %d: got %v, want boom", i+1, err)
+		}
+	}
+
+	if calls != 1 {
+		t.Fatalf("circuit invoked %d times, want 1", calls)
+	}
+}
+
+func TestDebounceFirstContextCancelledAtEntry(t *testing.T) {
+	var calls int
+
+	circuit := func(context.Context) (int, error) {
+		calls++
+
+		return 1, nil
+	}
+
+	d := DebounceFirstContext(circuit, time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := d(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("circuit invoked %d times, want 0", calls)
+	}
+}
+
+func TestDebounceFirstFirstCallerContextGoverns(t *testing.T) {
+	got := make(chan context.Context, 1)
+
+	circuit := func(ctx context.Context) (int, error) {
+		got <- ctx
+
+		return 1, nil
+	}
+
+	d := DebounceFirstContext(circuit, time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if _, err := d(ctx); err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+
+	if c := <-got; c != ctx {
+		t.Fatal("circuit did not receive the first caller's context")
+	}
+}
+
+func TestDebounceLastConcurrent(t *testing.T) {
+	var calls int
+	var mu sync.Mutex
+
+	circuit := func() (int, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+
+		return 1, nil
+	}
+
+	d := DebounceLast(circuit, 50*time.Millisecond)
+
+	const goroutines = 16
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			_, _ = d()
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if calls != 1 {
+		t.Fatalf("circuit invoked %d times, want 1", calls)
+	}
+}
+
+func TestDebounceLastContextCancelledAtEntry(t *testing.T) {
+	var calls int
+
+	circuit := func(context.Context) (int, error) {
+		calls++
+
+		return 1, nil
+	}
+
+	d := DebounceLastContext(circuit, time.Second)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := d(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("circuit invoked %d times, want 0", calls)
+	}
+}
+
+func TestDebounceLastSupersededCircuitCancelled(t *testing.T) {
+	started := make(chan struct{})
+	gotCancel := make(chan error, 1)
+
+	var (
+		mu          sync.Mutex
+		invocations int
+	)
+
+	circuit := func(ctx context.Context) (int, error) {
+		mu.Lock()
+		invocations++
+		first := invocations == 1
+		mu.Unlock()
+
+		if !first {
+			return 1, nil
+		}
+
+		close(started)
+
+		<-ctx.Done()
+
+		gotCancel <- ctx.Err()
+
+		return 0, ctx.Err()
+	}
+
+	d := DebounceLastContext(circuit, 10*time.Millisecond)
+
+	firstDone := make(chan struct{})
+
+	go func() {
+		defer close(firstDone)
+
+		_, _ = d(context.Background())
+	}()
+
+	// Wait until the first circuit is running, then supersede it.
+	<-started
+
+	secondDone := make(chan struct{})
+
+	go func() {
+		defer close(secondDone)
+
+		_, _ = d(context.Background())
+	}()
+
+	// The superseded circuit must observe the cancellation.
+	select {
+	case err := <-gotCancel:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("superseded circuit was not cancelled")
+	}
+
+	<-firstDone
+	<-secondDone
+}

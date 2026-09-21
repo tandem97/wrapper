@@ -6,7 +6,9 @@
 // expires. DebounceLast runs the circuit only after the window of the last
 // call expires; calls superseded by newer ones receive ErrDebounce.
 //
-// The wrapped circuit must respect the provided context.
+// The wrapped circuit must respect the provided context. A call with an
+// already cancelled context returns ctx.Err() immediately without
+// invoking the circuit.
 package debounce
 
 import (
@@ -40,8 +42,10 @@ func DebounceFirst[T any](circuit effector.ValueError[T], d time.Duration) effec
 
 // DebounceFirstContext returns a leading-edge debounce wrapper around
 // circuit: the first call executes circuit immediately, and calls within
-// d return the cached result and error of that execution. Circuit must
-// respect the provided context.
+// d return the cached result and error of that execution. The window
+// starts when the circuit completes, so a slow circuit shifts it. Circuit
+// must respect the provided context. A call with an already cancelled
+// context returns ctx.Err() immediately.
 func DebounceFirstContext[T any](circuit effector.ValueErrorContext[T], d time.Duration) effector.ValueErrorContext[T] {
 	if d <= 0 {
 		panic("debounce d must be positive")
@@ -56,6 +60,12 @@ func DebounceFirstContext[T any](circuit effector.ValueErrorContext[T], d time.D
 	)
 
 	return func(ctx context.Context) (T, error) {
+		if err := ctx.Err(); err != nil {
+			var res T
+
+			return res, err
+		}
+
 		var (
 			shouldCall bool
 			doneCh     chan struct{}
@@ -131,7 +141,8 @@ func DebounceLast[T any](circuit effector.ValueError[T], d time.Duration) effect
 // DebounceLastContext returns a trailing-edge debounce wrapper around
 // circuit: each call reschedules the execution of the window d, and calls
 // superseded by newer ones return ErrDebounce. Circuit must respect the
-// provided context.
+// provided context. A call with an already cancelled context returns
+// ctx.Err() immediately.
 func DebounceLastContext[T any](circuit effector.ValueErrorContext[T], d time.Duration) effector.ValueErrorContext[T] {
 	if d <= 0 {
 		panic("debounce d must be positive")
@@ -144,6 +155,10 @@ func DebounceLastContext[T any](circuit effector.ValueErrorContext[T], d time.Du
 	)
 
 	return func(parent context.Context) (res T, err error) {
+		if err := context.Cause(parent); err != nil {
+			return res, err
+		}
+
 		cCtx, cCancel := context.WithCancelCause(parent)
 		defer cCancel(nil)
 
