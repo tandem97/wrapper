@@ -380,3 +380,7 @@ Most packages ship with unit tests, and every wrapper has a runnable
 ```sh
 go test ./...
 ```
+
+## License
+
+[MIT](LICENSE)
