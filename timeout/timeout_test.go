@@ -225,9 +225,8 @@ func TestTimeoutConcurrent(t *testing.T) {
 	}
 
 	wrapped := Timeout(f)
-
-	const goroutines = 32
-	const calls = 50
+	goroutines := 32
+	calls := 50
 
 	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
@@ -238,8 +237,8 @@ func TestTimeoutConcurrent(t *testing.T) {
 
 			for i := 0; i < calls; i++ {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-
 				res, err := wrapped(ctx)
+
 				cancel()
 
 				if err != nil || res != 1 {

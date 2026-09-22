@@ -224,22 +224,21 @@ func TestRetryContextCancelledBeforeCall(t *testing.T) {
 }
 
 func TestRetryConcurrent(t *testing.T) {
-	var calls int
-	var mu sync.Mutex
+	var (
+		calls int
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		eff   = func() (int, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
 
-	eff := func() (int, error) {
-		mu.Lock()
-		calls++
-		mu.Unlock()
+			return 1, nil
+		}
+		retrier    = Retry(eff, 3, exponential.New(exponential.WithBase(time.Millisecond)))
+		goroutines = 16
+	)
 
-		return 1, nil
-	}
-
-	retrier := Retry(eff, 3, exponential.New(exponential.WithBase(time.Millisecond)))
-
-	const goroutines = 16
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 
@@ -252,6 +251,7 @@ func TestRetryConcurrent(t *testing.T) {
 			}
 		}()
 	}
+
 	wg.Wait()
 
 	mu.Lock()

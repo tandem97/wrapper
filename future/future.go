@@ -38,6 +38,7 @@ func WrapSlowFuncContext[T any](f effector.ValueError[T]) effector.ValueErrorCon
 
 	go func() {
 		res, err = f()
+
 		close(ready)
 	}()
 

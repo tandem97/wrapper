@@ -29,15 +29,15 @@ func (b *stubBackoff) Backoff() time.Duration {
 func (b *stubBackoff) Reset() { b.resets++ }
 
 func TestBreakerOpensAfterThreshold(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (int, error) {
+			calls++
 
-	circuit := func() (int, error) {
-		calls++
-
-		return 0, errors.New("boom")
-	}
-
-	b := Breaker(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
+			return 0, errors.New("boom")
+		}
+		b = Breaker(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
+	)
 
 	// Two failures open the breaker.
 	for i := 0; i < 2; i++ {
@@ -57,20 +57,20 @@ func TestBreakerOpensAfterThreshold(t *testing.T) {
 }
 
 func TestBreakerProbeSucceedsClosesBreaker(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (string, error) {
+			calls++
 
-	circuit := func() (string, error) {
-		calls++
+			if calls == 1 {
+				return "", errors.New("boom")
+			}
 
-		if calls == 1 {
-			return "", errors.New("boom")
+			return "ok", nil
 		}
-
-		return "ok", nil
-	}
-
-	backoff := &stubBackoff{delays: []time.Duration{time.Millisecond}}
-	b := Breaker(circuit, 1, backoff)
+		backoff = &stubBackoff{delays: []time.Duration{time.Millisecond}}
+		b       = Breaker(circuit, 1, backoff)
+	)
 
 	if _, err := b(); err == nil {
 		t.Fatal("expected error from circuit")
@@ -98,15 +98,15 @@ func TestBreakerProbeSucceedsClosesBreaker(t *testing.T) {
 }
 
 func TestBreakerProbeFailsReopens(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (int, error) {
+			calls++
 
-	circuit := func() (int, error) {
-		calls++
-
-		return 0, errors.New("boom")
-	}
-
-	b := Breaker(circuit, 1, &stubBackoff{delays: []time.Duration{time.Millisecond}})
+			return 0, errors.New("boom")
+		}
+		b = Breaker(circuit, 1, &stubBackoff{delays: []time.Duration{time.Millisecond}})
+	)
 
 	// Open the breaker.
 	if _, err := b(); err == nil {
@@ -131,15 +131,15 @@ func TestBreakerProbeFailsReopens(t *testing.T) {
 }
 
 func TestBreakerThresholdZero(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (int, error) {
+			calls++
 
-	circuit := func() (int, error) {
-		calls++
-
-		return 0, errors.New("boom")
-	}
-
-	b := Breaker(circuit, 0, &stubBackoff{delays: []time.Duration{time.Hour}})
+			return 0, errors.New("boom")
+		}
+		b = Breaker(circuit, 0, &stubBackoff{delays: []time.Duration{time.Hour}})
+	)
 
 	// The first call still invokes the circuit.
 	if _, err := b(); err == nil {
@@ -167,22 +167,21 @@ func TestBreakerPanicsOnNegativeThreshold(t *testing.T) {
 }
 
 func TestBreakerConcurrent(t *testing.T) {
-	var calls int
-	var mu sync.Mutex
+	var (
+		calls   int
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		circuit = func() (int, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
 
-	circuit := func() (int, error) {
-		mu.Lock()
-		calls++
-		mu.Unlock()
+			return 0, errors.New("boom")
+		}
+		b          = Breaker(circuit, 5, &stubBackoff{delays: []time.Duration{time.Hour}})
+		goroutines = 16
+	)
 
-		return 0, errors.New("boom")
-	}
-
-	b := Breaker(circuit, 5, &stubBackoff{delays: []time.Duration{time.Hour}})
-
-	const goroutines = 16
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 
@@ -194,22 +193,23 @@ func TestBreakerConcurrent(t *testing.T) {
 			}
 		}()
 	}
+
 	wg.Wait()
 }
 
 func TestBreakerContextCancellationNotCounted(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func(ctx context.Context) (int, error) {
+			calls++
 
-	circuit := func(ctx context.Context) (int, error) {
-		calls++
-
-		return 0, ctx.Err()
-	}
+			return 0, ctx.Err()
+		}
+		b = BreakerContext(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
-	b := BreakerContext(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
 
 	// Cancellations are passed through but never open the breaker.
 	for i := 0; i < 5; i++ {
@@ -224,15 +224,15 @@ func TestBreakerContextCancellationNotCounted(t *testing.T) {
 }
 
 func TestBreakerCountsRealFailures(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func(context.Context) (int, error) {
+			calls++
 
-	circuit := func(context.Context) (int, error) {
-		calls++
-
-		return 0, errors.New("boom")
-	}
-
-	b := BreakerContext(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
+			return 0, errors.New("boom")
+		}
+		b = BreakerContext(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
+	)
 
 	for i := 0; i < 2; i++ {
 		if _, err := b(context.Background()); err == nil {
@@ -251,19 +251,19 @@ func TestBreakerCountsRealFailures(t *testing.T) {
 }
 
 func TestBreakerResetsCounterOnSuccess(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (int, error) {
+			calls++
 
-	circuit := func() (int, error) {
-		calls++
+			if calls%3 == 0 {
+				return 1, nil
+			}
 
-		if calls%3 == 0 {
-			return 1, nil
+			return 0, errors.New("boom")
 		}
-
-		return 0, errors.New("boom")
-	}
-
-	b := Breaker(circuit, 2, &stubBackoff{delays: []time.Duration{time.Millisecond}})
+		b = Breaker(circuit, 2, &stubBackoff{delays: []time.Duration{time.Millisecond}})
+	)
 
 	// fail, fail → open
 	if _, err := b(); err == nil {
@@ -304,7 +304,6 @@ func TestBreakerResetsCounterOnSuccess(t *testing.T) {
 
 func TestBreakerBackoffResetOnSuccess(t *testing.T) {
 	backoff := &stubBackoff{delays: []time.Duration{time.Hour}}
-
 	b := Breaker(func() (int, error) { return 1, nil }, 2, backoff)
 
 	if _, err := b(); err != nil {
@@ -318,13 +317,11 @@ func TestBreakerBackoffResetOnSuccess(t *testing.T) {
 
 func TestBreakerContextPassesContext(t *testing.T) {
 	got := make(chan context.Context, 1)
-
 	circuit := func(ctx context.Context) (int, error) {
 		got <- ctx
 
 		return 1, nil
 	}
-
 	b := BreakerContext(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -341,7 +338,6 @@ func TestBreakerContextPassesContext(t *testing.T) {
 
 func TestBreakerReturnsCircuitError(t *testing.T) {
 	boom := errors.New("boom")
-
 	b := Breaker(func() (int, error) { return 0, boom }, 3, &stubBackoff{delays: []time.Duration{time.Hour}})
 
 	_, err := b()
@@ -351,28 +347,27 @@ func TestBreakerReturnsCircuitError(t *testing.T) {
 }
 
 func TestBreakerSingleProbe(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
+	var (
+		calls   int
+		mu      sync.Mutex
+		started = make(chan struct{})
+		release = make(chan struct{})
+		circuit = func() (int, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
 
-	var calls int
-	var mu sync.Mutex
+			if calls == 1 {
+				return 0, errors.New("boom")
+			}
 
-	circuit := func() (int, error) {
-		mu.Lock()
-		calls++
-		mu.Unlock()
+			close(started)
+			<-release
 
-		if calls == 1 {
-			return 0, errors.New("boom")
+			return 1, nil
 		}
-
-		close(started)
-		<-release
-
-		return 1, nil
-	}
-
-	b := Breaker(circuit, 1, &stubBackoff{delays: []time.Duration{time.Millisecond}})
+		b = Breaker(circuit, 1, &stubBackoff{delays: []time.Duration{time.Millisecond}})
+	)
 
 	// Open the breaker.
 	if _, err := b(); err == nil {

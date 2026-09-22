@@ -1,35 +1,57 @@
+version: "2"
 linters:
   enable:
+    - asasalint
     - bodyclose
-    - decorder
+    - canonicalheader
+    - copyloopvar
+    - durationcheck
+    - embeddedstructfieldcheck
     - errchkjson
     - errname
     - errorlint
     - forcetypeassert
+    - gocheckcompilerdirectives
+    - goconst
     - gocritic
-    - wsl
-    - prealloc
-    - rowserrcheck
-    - sqlclosecheck
-    - unparam
+    - gosec
     - mirror
-    - unconvert
-    - usestdlibvars
-    - durationcheck
-    - stylecheck
-    - unparam
+    - perfsprint
+    - protogetter
+    - prealloc
+    - revive
+    - rowserrcheck
+    - sloglint
+    - sqlclosecheck
+    - staticcheck
     - testifylint
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - usetesting
+    - wsl_v5
 
-linters-settings:
-  errchkjson:
-    check-error-free-encoding: true
+  settings:
+    errchkjson:
+      check-error-free-encoding: true
+    errorlint:
+      errorf: false
+    testifylint:
+      disable:
+        - require-error
+    revive:
+      rules:
+        - name: redefines-builtin-id
+          disabled: true
+    perfsprint:
+      error-format: false
+    staticcheck:
+      checks: ["all", "-QF1008"]
 
-  errorlint:
-    errorf: false
-
-  govet:
-    enable:
-      - fieldalignment
-
-  testifylint:
-    enable-all: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling

@@ -118,8 +118,8 @@ func TestBackoffConcurrent(t *testing.T) {
 		WithJitter(0.5),
 	)
 
-	const goroutines = 32
-	const calls = 1000
+	goroutines := 32
+	calls := 1000
 
 	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
@@ -134,6 +134,7 @@ func TestBackoffConcurrent(t *testing.T) {
 			}
 		}()
 	}
+
 	wg.Wait()
 }
 
@@ -212,6 +213,7 @@ func TestBackoffDifferentSeeds(t *testing.T) {
 	a, b := newBackoff(1), newBackoff(2)
 
 	different := false
+
 	for i := 0; i < 100; i++ {
 		if a.Backoff() != b.Backoff() {
 			different = true

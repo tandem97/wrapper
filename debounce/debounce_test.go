@@ -44,24 +44,24 @@ func TestDebounceFirstCachesResult(t *testing.T) {
 }
 
 func TestDebounceFirstConcurrent(t *testing.T) {
-	var calls int
-	var mu sync.Mutex
+	var (
+		calls int
+		mu    sync.Mutex
+		wg    sync.WaitGroup
 
-	circuit := func() (int, error) {
-		mu.Lock()
-		calls++
-		mu.Unlock()
+		circuit = func() (int, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
 
-		time.Sleep(10 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 
-		return 7, nil
-	}
+			return 7, nil
+		}
+		d          = DebounceFirst(circuit, time.Second)
+		goroutines = 16
+	)
 
-	d := DebounceFirst(circuit, time.Second)
-
-	const goroutines = 16
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 
@@ -74,6 +74,7 @@ func TestDebounceFirstConcurrent(t *testing.T) {
 			}
 		}()
 	}
+
 	wg.Wait()
 
 	if calls != 1 {
@@ -217,8 +218,10 @@ func TestDebounceLastPanicsOnNonPositive(t *testing.T) {
 }
 
 func TestDebounceFirstCachesError(t *testing.T) {
-	boom := errors.New("boom")
-	var calls int
+	var (
+		boom  = errors.New("boom")
+		calls int
+	)
 
 	circuit := func() (int, error) {
 		calls++
@@ -288,22 +291,22 @@ func TestDebounceFirstFirstCallerContextGoverns(t *testing.T) {
 }
 
 func TestDebounceLastConcurrent(t *testing.T) {
-	var calls int
-	var mu sync.Mutex
+	var (
+		calls int
+		mu    sync.Mutex
+		wg    sync.WaitGroup
 
-	circuit := func() (int, error) {
-		mu.Lock()
-		calls++
-		mu.Unlock()
+		circuit = func() (int, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
 
-		return 1, nil
-	}
+			return 1, nil
+		}
+		d          = DebounceLast(circuit, 50*time.Millisecond)
+		goroutines = 16
+	)
 
-	d := DebounceLast(circuit, 50*time.Millisecond)
-
-	const goroutines = 16
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 
@@ -313,6 +316,7 @@ func TestDebounceLastConcurrent(t *testing.T) {
 			_, _ = d()
 		}()
 	}
+
 	wg.Wait()
 
 	mu.Lock()

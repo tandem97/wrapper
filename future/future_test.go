@@ -76,8 +76,10 @@ func TestWrapSlowFuncFirstCallBlocks(t *testing.T) {
 }
 
 func TestWrapSlowFuncConcurrent(t *testing.T) {
-	var calls int
-	var mu sync.Mutex
+	var (
+		calls int
+		mu    sync.Mutex
+	)
 
 	f := func() (int, error) {
 		mu.Lock()
@@ -106,6 +108,7 @@ func TestWrapSlowFuncConcurrent(t *testing.T) {
 			}
 		}()
 	}
+
 	wg.Wait()
 
 	if calls != 1 {

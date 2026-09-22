@@ -107,7 +107,9 @@ func DebounceFirstContext[T any](circuit effector.ValueErrorContext[T], d time.D
 
 			result, err = newResult, newErr
 			threshold = time.Now().Add(d)
+
 			close(done)
+
 			done = nil
 
 			return result, err

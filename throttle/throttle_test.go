@@ -72,8 +72,10 @@ func TestThrottleRefills(t *testing.T) {
 }
 
 func TestThrottleConcurrent(t *testing.T) {
-	var calls int
-	var mu sync.Mutex
+	var (
+		calls int
+		mu    sync.Mutex
+	)
 
 	circuit := func() (int, error) {
 		mu.Lock()
@@ -102,6 +104,7 @@ func TestThrottleConcurrent(t *testing.T) {
 			_, _ = throttled()
 		}()
 	}
+
 	wg.Wait()
 
 	if calls != max {
