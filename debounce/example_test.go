@@ -58,7 +58,7 @@ func ExampleDebounceLast() {
 		go func() {
 			defer wg.Done()
 
-			debounced(context.Background())
+			_, _ = debounced(context.Background())
 		}()
 	}
 

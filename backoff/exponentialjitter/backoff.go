@@ -95,7 +95,7 @@ func WithJitter(jitter float64) Opt {
 // the generator is seeded randomly.
 func WithSeed(seed int64) Opt {
 	return func(b *Backoff) {
-		b.rand = rand.New(rand.NewSource(seed))
+		b.rand = rand.New(rand.NewSource(seed)) // #nosec G404
 	}
 }
 
@@ -111,7 +111,7 @@ func New(opts ...Opt) *Backoff {
 		cap:        DefaultCap,
 		multiplier: DefaultMultiplier,
 		jitter:     DefaultJitter,
-		rand:       rand.New(rand.NewSource(rand.Int63())),
+		rand:       rand.New(rand.NewSource(rand.Int63())), //#nosec G404
 	}
 
 	for _, opt := range opts {

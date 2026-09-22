@@ -98,7 +98,7 @@ func TestDebounceFirstContextCancellation(t *testing.T) {
 
 	defer cancel()
 
-	go d(callCtx)
+	go func() { _, _ = d(callCtx) }()
 
 	<-started
 
