@@ -303,8 +303,10 @@ func TestBreakerResetsCounterOnSuccess(t *testing.T) {
 }
 
 func TestBreakerBackoffResetOnSuccess(t *testing.T) {
-	backoff := &stubBackoff{delays: []time.Duration{time.Hour}}
-	b := Breaker(func() (int, error) { return 1, nil }, 2, backoff)
+	var (
+		backoff = &stubBackoff{delays: []time.Duration{time.Hour}}
+		b       = Breaker(func() (int, error) { return 1, nil }, 2, backoff)
+	)
 
 	if _, err := b(); err != nil {
 		t.Fatalf("unexpected error %v", err)
@@ -316,13 +318,15 @@ func TestBreakerBackoffResetOnSuccess(t *testing.T) {
 }
 
 func TestBreakerContextPassesContext(t *testing.T) {
-	got := make(chan context.Context, 1)
-	circuit := func(ctx context.Context) (int, error) {
-		got <- ctx
+	var (
+		got     = make(chan context.Context, 1)
+		circuit = func(ctx context.Context) (int, error) {
+			got <- ctx
 
-		return 1, nil
-	}
-	b := BreakerContext(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
+			return 1, nil
+		}
+		b = BreakerContext(circuit, 2, &stubBackoff{delays: []time.Duration{time.Hour}})
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -337,8 +341,10 @@ func TestBreakerContextPassesContext(t *testing.T) {
 }
 
 func TestBreakerReturnsCircuitError(t *testing.T) {
-	boom := errors.New("boom")
-	b := Breaker(func() (int, error) { return 0, boom }, 3, &stubBackoff{delays: []time.Duration{time.Hour}})
+	var (
+		boom = errors.New("boom")
+		b    = Breaker(func() (int, error) { return 0, boom }, 3, &stubBackoff{delays: []time.Duration{time.Hour}})
+	)
 
 	_, err := b()
 	if !errors.Is(err, boom) {

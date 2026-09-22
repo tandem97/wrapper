@@ -9,11 +9,12 @@ import (
 )
 
 func TestTimeoutReturnsResult(t *testing.T) {
-	f := func() (string, error) {
-		return "ok", nil
-	}
-
-	wrapped := Timeout(f)
+	var (
+		f = func() (string, error) {
+			return "ok", nil
+		}
+		wrapped = Timeout(f)
+	)
 
 	res, err := wrapped(context.Background())
 	if err != nil || res != "ok" {
@@ -22,15 +23,16 @@ func TestTimeoutReturnsResult(t *testing.T) {
 }
 
 func TestTimeoutReturnsResultBeforeDeadline(t *testing.T) {
-	f := func() (int, error) {
-		time.Sleep(5 * time.Millisecond)
+	var (
+		f = func() (int, error) {
+			time.Sleep(5 * time.Millisecond)
 
-		return 42, nil
-	}
+			return 42, nil
+		}
+		wrapped     = Timeout(f)
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	)
 
-	wrapped := Timeout(f)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	res, err := wrapped(ctx)
@@ -40,11 +42,12 @@ func TestTimeoutReturnsResultBeforeDeadline(t *testing.T) {
 }
 
 func TestTimeoutReturnsErrorFromF(t *testing.T) {
-	boom := errors.New("boom")
-
-	wrapped := Timeout(func() (int, error) {
-		return 0, boom
-	})
+	var (
+		boom    = errors.New("boom")
+		wrapped = Timeout(func() (int, error) {
+			return 0, boom
+		})
+	)
 
 	_, err := wrapped(context.Background())
 	if !errors.Is(err, boom) {
@@ -53,27 +56,23 @@ func TestTimeoutReturnsErrorFromF(t *testing.T) {
 }
 
 func TestTimeoutFiresOnDeadline(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-
-	f := func() (int, error) {
-		close(started)
-		<-release
-
-		return 0, nil
-	}
-
-	wrapped := Timeout(f)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-
-	done := make(chan struct{})
-
 	var (
-		res int
-		err error
+		started = make(chan struct{})
+		release = make(chan struct{})
+		f       = func() (int, error) {
+			close(started)
+			<-release
+
+			return 0, nil
+		}
+		wrapped     = Timeout(f)
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+		done        = make(chan struct{})
+		res         int
+		err         error
 	)
+
+	defer cancel()
 
 	go func() {
 		defer close(done)
@@ -96,21 +95,19 @@ func TestTimeoutFiresOnDeadline(t *testing.T) {
 }
 
 func TestTimeoutFiresOnCancellation(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
+	var (
+		started = make(chan struct{})
+		release = make(chan struct{})
+		f       = func() (int, error) {
+			close(started)
+			<-release
 
-	f := func() (int, error) {
-		close(started)
-		<-release
-
-		return 0, nil
-	}
-
-	wrapped := Timeout(f)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
+			return 0, nil
+		}
+		wrapped     = Timeout(f)
+		ctx, cancel = context.WithCancel(context.Background())
+		done        = make(chan struct{})
+	)
 
 	go func() {
 		defer close(done)
@@ -129,15 +126,16 @@ func TestTimeoutFiresOnCancellation(t *testing.T) {
 }
 
 func TestTimeoutAlreadyCancelledDoesNotInvokeF(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		wrapped = Timeout(func() (int, error) {
+			calls++
 
-	wrapped := Timeout(func() (int, error) {
-		calls++
+			return 1, nil
+		})
+		ctx, cancel = context.WithCancel(context.Background())
+	)
 
-		return 1, nil
-	})
-
-	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	_, err := wrapped(ctx)
@@ -151,24 +149,21 @@ func TestTimeoutAlreadyCancelledDoesNotInvokeF(t *testing.T) {
 }
 
 func TestTimeoutReturnsCause(t *testing.T) {
-	cause := errors.New("custom cause")
-	started := make(chan struct{})
-	release := make(chan struct{})
+	var (
+		cause   = errors.New("custom cause")
+		started = make(chan struct{})
+		release = make(chan struct{})
+		f       = func() (int, error) {
+			close(started)
+			<-release
 
-	f := func() (int, error) {
-		close(started)
-		<-release
-
-		return 0, nil
-	}
-
-	wrapped := Timeout(f)
-
-	ctx, cancel := context.WithCancelCause(context.Background())
-
-	done := make(chan struct{})
-
-	var err error
+			return 0, nil
+		}
+		wrapped     = Timeout(f)
+		ctx, cancel = context.WithCancelCause(context.Background())
+		done        = make(chan struct{})
+		err         error
+	)
 
 	go func() {
 		defer close(done)
@@ -188,21 +183,21 @@ func TestTimeoutReturnsCause(t *testing.T) {
 }
 
 func TestTimeoutGoroutineCompletesAfterTimeout(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	finished := make(chan struct{})
+	var (
+		started  = make(chan struct{})
+		release  = make(chan struct{})
+		finished = make(chan struct{})
+		f        = func() (int, error) {
+			close(started)
+			<-release
+			close(finished)
 
-	f := func() (int, error) {
-		close(started)
-		<-release
-		close(finished)
+			return 0, nil
+		}
+		wrapped     = Timeout(f)
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Millisecond)
+	)
 
-		return 0, nil
-	}
-
-	wrapped := Timeout(f)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
 	defer cancel()
 
 	_, _ = wrapped(ctx)
@@ -218,17 +213,18 @@ func TestTimeoutGoroutineCompletesAfterTimeout(t *testing.T) {
 }
 
 func TestTimeoutConcurrent(t *testing.T) {
-	f := func() (int, error) {
-		time.Sleep(time.Millisecond)
+	var (
+		f = func() (int, error) {
+			time.Sleep(time.Millisecond)
 
-		return 1, nil
-	}
+			return 1, nil
+		}
+		wrapped    = Timeout(f)
+		goroutines = 32
+		calls      = 50
+		wg         sync.WaitGroup
+	)
 
-	wrapped := Timeout(f)
-	goroutines := 32
-	calls := 50
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 

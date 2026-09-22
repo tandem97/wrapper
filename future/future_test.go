@@ -9,17 +9,17 @@ import (
 )
 
 func TestWrapSlowFuncCachesResult(t *testing.T) {
-	var calls int
+	var (
+		calls int
+		f     = func() (int, error) {
+			calls++
 
-	f := func() (int, error) {
-		calls++
+			time.Sleep(20 * time.Millisecond)
 
-		time.Sleep(20 * time.Millisecond)
-
-		return 42, nil
-	}
-
-	wrapped := WrapSlowFunc(f)
+			return 42, nil
+		}
+		wrapped = WrapSlowFunc(f)
+	)
 
 	for i := 0; i < 3; i++ {
 		res, err := wrapped()
@@ -34,20 +34,19 @@ func TestWrapSlowFuncCachesResult(t *testing.T) {
 }
 
 func TestWrapSlowFuncFirstCallBlocks(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
+	var (
+		started = make(chan struct{})
+		release = make(chan struct{})
+		f       = func() (string, error) {
+			close(started)
 
-	f := func() (string, error) {
-		close(started)
+			<-release
 
-		<-release
-
-		return "ok", nil
-	}
-
-	wrapped := WrapSlowFunc(f)
-
-	done := make(chan struct{})
+			return "ok", nil
+		}
+		wrapped = WrapSlowFunc(f)
+		done    = make(chan struct{})
+	)
 
 	go func() {
 		defer close(done)
@@ -79,23 +78,20 @@ func TestWrapSlowFuncConcurrent(t *testing.T) {
 	var (
 		calls int
 		mu    sync.Mutex
+		f     = func() (int, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+
+			time.Sleep(10 * time.Millisecond)
+
+			return 7, nil
+		}
+		wrapped    = WrapSlowFunc(f)
+		goroutines = 16
+		wg         sync.WaitGroup
 	)
 
-	f := func() (int, error) {
-		mu.Lock()
-		calls++
-		mu.Unlock()
-
-		time.Sleep(10 * time.Millisecond)
-
-		return 7, nil
-	}
-
-	wrapped := WrapSlowFunc(f)
-
-	const goroutines = 16
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 
@@ -117,11 +113,12 @@ func TestWrapSlowFuncConcurrent(t *testing.T) {
 }
 
 func TestWrapSlowFuncCachesError(t *testing.T) {
-	boom := errors.New("boom")
-
-	wrapped := WrapSlowFunc(func() (int, error) {
-		return 0, boom
-	})
+	var (
+		boom    = errors.New("boom")
+		wrapped = WrapSlowFunc(func() (int, error) {
+			return 0, boom
+		})
+	)
 
 	for i := 0; i < 3; i++ {
 		_, err := wrapped()
@@ -132,13 +129,14 @@ func TestWrapSlowFuncCachesError(t *testing.T) {
 }
 
 func TestWrapSlowFuncStartsImmediately(t *testing.T) {
-	started := make(chan struct{})
+	var (
+		started = make(chan struct{})
+		f       = func() (int, error) {
+			close(started)
 
-	f := func() (int, error) {
-		close(started)
-
-		return 1, nil
-	}
+			return 1, nil
+		}
+	)
 
 	_ = WrapSlowFunc(f)
 
@@ -150,22 +148,20 @@ func TestWrapSlowFuncStartsImmediately(t *testing.T) {
 }
 
 func TestWrapSlowFuncContextCancellation(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
+	var (
+		started = make(chan struct{})
+		release = make(chan struct{})
+		f       = func() (int, error) {
+			close(started)
 
-	f := func() (int, error) {
-		close(started)
+			<-release
 
-		<-release
-
-		return 42, nil
-	}
-
-	wrapped := WrapSlowFuncContext(f)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
+			return 42, nil
+		}
+		wrapped     = WrapSlowFuncContext(f)
+		ctx, cancel = context.WithCancel(context.Background())
+		done        = make(chan struct{})
+	)
 
 	go func() {
 		defer close(done)
@@ -184,21 +180,21 @@ func TestWrapSlowFuncContextCancellation(t *testing.T) {
 }
 
 func TestWrapSlowFuncContextResultCachedAfterCancellation(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-
-	f := func() (int, error) {
-		close(started)
-
-		<-release
-
-		return 42, nil
-	}
-
-	wrapped := WrapSlowFuncContext(f)
-
 	// A cancelled caller does not block.
-	ctx, cancel := context.WithCancel(context.Background())
+	var (
+		started = make(chan struct{})
+		release = make(chan struct{})
+		f       = func() (int, error) {
+			close(started)
+
+			<-release
+
+			return 42, nil
+		}
+		wrapped     = WrapSlowFuncContext(f)
+		ctx, cancel = context.WithCancel(context.Background())
+	)
+
 	cancel()
 
 	if _, err := wrapped(ctx); !errors.Is(err, context.Canceled) {

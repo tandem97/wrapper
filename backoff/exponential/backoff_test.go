@@ -58,8 +58,10 @@ func TestBackoffReset(t *testing.T) {
 }
 
 func TestBackoffSaturatesAtCap(t *testing.T) {
-	max := time.Duration(math.MaxInt64)
-	b := New(WithBase(max/4), WithCap(max))
+	var (
+		max = time.Duration(math.MaxInt64)
+		b   = New(WithBase(max/4), WithCap(max))
+	)
 
 	// (max/4)<<1 and (max/4)<<2 fit in int64; the next doubling would
 	// overflow, so the sequence pins at cap after returning the last
@@ -105,12 +107,13 @@ func TestNewPanics(t *testing.T) {
 }
 
 func TestBackoffConcurrent(t *testing.T) {
-	b := New(WithBase(time.Millisecond), WithCap(time.Second))
+	var (
+		b          = New(WithBase(time.Millisecond), WithCap(time.Second))
+		goroutines = 32
+		calls      = 1000
+		wg         sync.WaitGroup
+	)
 
-	goroutines := 32
-	calls := 1000
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 		go func() {

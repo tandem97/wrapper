@@ -111,17 +111,18 @@ func TestNewPanics(t *testing.T) {
 }
 
 func TestBackoffConcurrent(t *testing.T) {
-	b := New(
-		WithBase(time.Millisecond),
-		WithCap(10*time.Second),
-		WithMultiplier(2),
-		WithJitter(0.5),
+	var (
+		b = New(
+			WithBase(time.Millisecond),
+			WithCap(10*time.Second),
+			WithMultiplier(2),
+			WithJitter(0.5),
+		)
+		goroutines = 32
+		calls      = 1000
+		wg         sync.WaitGroup
 	)
 
-	goroutines := 32
-	calls := 1000
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 		go func() {

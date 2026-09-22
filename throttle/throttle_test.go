@@ -9,18 +9,18 @@ import (
 )
 
 func TestThrottleAllowsUpToMax(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (string, error) {
+			calls++
 
-	circuit := func() (string, error) {
-		calls++
+			return "ok", nil
+		}
+		refillCtx, stop = context.WithCancel(context.Background())
+		throttled       = Throttle(refillCtx, circuit, 2, 100, time.Hour)
+	)
 
-		return "ok", nil
-	}
-
-	refillCtx, stop := context.WithCancel(context.Background())
 	defer stop()
-
-	throttled := Throttle(refillCtx, circuit, 2, 100, time.Hour)
 
 	for i := 0; i < 2; i++ {
 		if _, err := throttled(); err != nil {
@@ -38,19 +38,19 @@ func TestThrottleAllowsUpToMax(t *testing.T) {
 }
 
 func TestThrottleRefills(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (int, error) {
+			calls++
 
-	circuit := func() (int, error) {
-		calls++
-
-		return 1, nil
-	}
-
-	refillCtx, stop := context.WithCancel(context.Background())
-	defer stop()
+			return 1, nil
+		}
+		refillCtx, stop = context.WithCancel(context.Background())
+		throttled       = Throttle(refillCtx, circuit, 1, 1, 20*time.Millisecond)
+	)
 
 	// One token, refilled by one token every 20ms.
-	throttled := Throttle(refillCtx, circuit, 1, 1, 20*time.Millisecond)
+	defer stop()
 
 	if _, err := throttled(); err != nil {
 		t.Fatal("first call should pass")
@@ -73,28 +73,24 @@ func TestThrottleRefills(t *testing.T) {
 
 func TestThrottleConcurrent(t *testing.T) {
 	var (
-		calls int
-		mu    sync.Mutex
+		calls   int
+		mu      sync.Mutex
+		circuit = func() (int, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+
+			return 1, nil
+		}
+		refillCtx, stop = context.WithCancel(context.Background())
+		max             = 5
+		throttled       = Throttle(refillCtx, circuit, uint(max), 1, time.Hour)
+		goroutines      = 100
+		wg              sync.WaitGroup
 	)
 
-	circuit := func() (int, error) {
-		mu.Lock()
-		calls++
-		mu.Unlock()
-
-		return 1, nil
-	}
-
-	refillCtx, stop := context.WithCancel(context.Background())
 	defer stop()
 
-	const max = 5
-
-	throttled := Throttle(refillCtx, circuit, max, 1, time.Hour)
-
-	const goroutines = 100
-
-	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
 
@@ -113,17 +109,16 @@ func TestThrottleConcurrent(t *testing.T) {
 }
 
 func TestThrottleStopsRefillOnCancellation(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (int, error) {
+			calls++
 
-	circuit := func() (int, error) {
-		calls++
-
-		return 1, nil
-	}
-
-	refillCtx, stop := context.WithCancel(context.Background())
-
-	throttled := Throttle(refillCtx, circuit, 1, 1, 10*time.Millisecond)
+			return 1, nil
+		}
+		refillCtx, stop = context.WithCancel(context.Background())
+		throttled       = Throttle(refillCtx, circuit, 1, 1, 10*time.Millisecond)
+	)
 
 	if _, err := throttled(); err != nil {
 		t.Fatal("first call should pass")
@@ -175,19 +170,19 @@ func TestThrottlePanicsOnInvalidArgs(t *testing.T) {
 }
 
 func TestThrottleSaturatesAtMax(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		circuit = func() (int, error) {
+			calls++
 
-	circuit := func() (int, error) {
-		calls++
-
-		return 1, nil
-	}
-
-	refillCtx, stop := context.WithCancel(context.Background())
-	defer stop()
+			return 1, nil
+		}
+		refillCtx, stop = context.WithCancel(context.Background())
+		throttled       = Throttle(refillCtx, circuit, 2, 5, 10*time.Millisecond)
+	)
 
 	// refill (5) exceeds max (2): the bucket must saturate at max.
-	throttled := Throttle(refillCtx, circuit, 2, 5, 10*time.Millisecond)
+	defer stop()
 
 	// Drain the bucket.
 	for i := 0; i < 2; i++ {
@@ -220,20 +215,19 @@ func TestThrottleSaturatesAtMax(t *testing.T) {
 }
 
 func TestThrottleContextPassesContext(t *testing.T) {
-	got := make(chan context.Context, 1)
+	var (
+		got     = make(chan context.Context, 1)
+		circuit = func(ctx context.Context) (int, error) {
+			got <- ctx
 
-	circuit := func(ctx context.Context) (int, error) {
-		got <- ctx
+			return 1, nil
+		}
+		refillCtx, stop = context.WithCancel(context.Background())
+		throttled       = ThrottleContext(refillCtx, circuit, 1, 1, time.Hour)
+		ctx, cancel     = context.WithCancel(context.Background())
+	)
 
-		return 1, nil
-	}
-
-	refillCtx, stop := context.WithCancel(context.Background())
 	defer stop()
-
-	throttled := ThrottleContext(refillCtx, circuit, 1, 1, time.Hour)
-
-	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	if _, err := throttled(ctx); err != nil {

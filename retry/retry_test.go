@@ -34,15 +34,15 @@ func (b *stubBackoff) Backoff() time.Duration {
 func (b *stubBackoff) Reset() { b.resets++ }
 
 func TestRetrySucceedsOnFirstAttempt(t *testing.T) {
-	var calls int
+	var (
+		calls int
+		eff   = func() (int, error) {
+			calls++
 
-	eff := func() (int, error) {
-		calls++
-
-		return 42, nil
-	}
-
-	backoff := &stubBackoff{delays: []time.Duration{time.Millisecond}}
+			return 42, nil
+		}
+		backoff = &stubBackoff{delays: []time.Duration{time.Millisecond}}
+	)
 
 	res, err := Retry(eff, 5, backoff)()
 	if err != nil || res != 42 {
@@ -63,19 +63,19 @@ func TestRetrySucceedsOnFirstAttempt(t *testing.T) {
 }
 
 func TestRetrySucceedsAfterFailures(t *testing.T) {
-	var calls int
+	var (
+		calls int
+		eff   = func() (string, error) {
+			calls++
 
-	eff := func() (string, error) {
-		calls++
+			if calls < 3 {
+				return "", errors.New("transient")
+			}
 
-		if calls < 3 {
-			return "", errors.New("transient")
+			return "ok", nil
 		}
-
-		return "ok", nil
-	}
-
-	backoff := &stubBackoff{delays: []time.Duration{time.Microsecond}}
+		backoff = &stubBackoff{delays: []time.Duration{time.Microsecond}}
+	)
 
 	res, err := Retry(eff, 5, backoff)()
 	if err != nil || res != "ok" {
@@ -92,17 +92,16 @@ func TestRetrySucceedsAfterFailures(t *testing.T) {
 }
 
 func TestRetryExhaustsAttempts(t *testing.T) {
-	var calls int
+	var (
+		calls   int
+		wantErr = errors.New("permanent")
+		eff     = func() (int, error) {
+			calls++
 
-	wantErr := errors.New("permanent")
-
-	eff := func() (int, error) {
-		calls++
-
-		return 0, wantErr
-	}
-
-	backoff := &stubBackoff{delays: []time.Duration{time.Microsecond}}
+			return 0, wantErr
+		}
+		backoff = &stubBackoff{delays: []time.Duration{time.Microsecond}}
+	)
 
 	_, err := Retry(eff, 3, backoff)()
 	if !errors.Is(err, wantErr) {
@@ -123,18 +122,17 @@ func TestRetryExhaustsAttempts(t *testing.T) {
 }
 
 func TestRetryContextCancellation(t *testing.T) {
-	var calls int
+	var (
+		calls int
+		eff   = func(context.Context) (int, error) {
+			calls++
 
-	eff := func(context.Context) (int, error) {
-		calls++
-
-		return 0, errors.New("transient")
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	backoff := &stubBackoff{delays: []time.Duration{time.Hour}}
-
-	done := make(chan struct{})
+			return 0, errors.New("transient")
+		}
+		ctx, cancel = context.WithCancel(context.Background())
+		backoff     = &stubBackoff{delays: []time.Duration{time.Hour}}
+		done        = make(chan struct{})
+	)
 
 	go func() {
 		defer close(done)
@@ -177,18 +175,18 @@ func TestRetryPanicsOnNonPositiveRetries(t *testing.T) {
 }
 
 func TestRetryContextPassesContext(t *testing.T) {
-	got := make(chan context.Context, 1)
+	var (
+		got = make(chan context.Context, 1)
+		eff = func(ctx context.Context) (int, error) {
+			got <- ctx
 
-	eff := func(ctx context.Context) (int, error) {
-		got <- ctx
+			return 1, nil
+		}
+		ctx, cancel = context.WithCancel(context.Background())
+		retrier     = RetryContext(eff, 3, &stubBackoff{delays: []time.Duration{time.Microsecond}})
+	)
 
-		return 1, nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	retrier := RetryContext(eff, 3, &stubBackoff{delays: []time.Duration{time.Microsecond}})
 
 	if _, err := retrier(ctx); err != nil {
 		t.Fatalf("unexpected error %v", err)
@@ -200,18 +198,18 @@ func TestRetryContextPassesContext(t *testing.T) {
 }
 
 func TestRetryContextCancelledBeforeCall(t *testing.T) {
-	var calls int
+	var (
+		calls int
+		eff   = func(context.Context) (int, error) {
+			calls++
 
-	eff := func(context.Context) (int, error) {
-		calls++
+			return 1, nil
+		}
+		ctx, cancel = context.WithCancel(context.Background())
+		retrier     = RetryContext(eff, 3, &stubBackoff{delays: []time.Duration{time.Microsecond}})
+	)
 
-		return 1, nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
-	retrier := RetryContext(eff, 3, &stubBackoff{delays: []time.Duration{time.Microsecond}})
 
 	_, err := retrier(ctx)
 	if !errors.Is(err, context.Canceled) {
