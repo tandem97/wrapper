@@ -1,7 +1,6 @@
 # wrapper
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/tandem97/wrapper.svg)](https://pkg.go.dev/github.com/tandem97/wrapper)
-[![Go Report Card](https://goreportcard.com/badge/github.com/tandem97/wrapper)](https://goreportcard.com/report/github.com/tandem97/wrapper)
 
 Resilience wrappers for your functions.
 
@@ -381,7 +380,3 @@ Most packages ship with unit tests, and every wrapper has a runnable
 ```sh
 go test ./...
 ```
-
-## License
-
-[MIT](LICENSE)
