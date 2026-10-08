@@ -448,8 +448,10 @@ the one below it, so the semantics stay predictable.
   retries, debounce and the breaker rely on the wrapped call observing
   cancellation in a timely manner.
 - **A call with an already cancelled context returns `ctx.Err()` immediately**
-  without invoking the wrapped function (`retry`, `debounce`, `timeout`,
-  `future`).
+  without invoking the wrapped function (`retry`, `debounce`, `timeout`).
+  `future` is the exception: a result that is already cached is returned even
+  then, because there is nothing left to wait for, and the context bounds the
+  wait rather than the work.
 - **Context errors are not circuit failures**: `circuitbreaker` passes
   `context.Canceled`/`context.DeadlineExceeded` through without counting them.
 - **Panics inside a wrapped function crash the process** — wrappers never

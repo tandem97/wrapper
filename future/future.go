@@ -28,6 +28,14 @@ func WrapSlowFunc[T any](f effector.ValueError[T]) effector.ValueError[T] {
 // result. The first call blocks until f returns or ctx is done; if ctx is
 // done first, ctx.Err() is returned and the result is still cached for
 // later calls. Subsequent calls return the cached result immediately.
+//
+// The context bounds the wait only, never the work: f takes no context, so
+// it runs to completion whatever a caller does. A result that is already
+// cached is returned even when ctx is already done, since there is nothing
+// left to wait for; ctx.Err() comes back only while f is still running.
+//
+// Unlike the other context-aware wrappers in the module, an already
+// cancelled context does not short-circuit the call.
 func WrapSlowFuncContext[T any](f effector.ValueError[T]) effector.ValueErrorContext[T] {
 	ready := make(chan struct{})
 
@@ -43,6 +51,19 @@ func WrapSlowFuncContext[T any](f effector.ValueError[T]) effector.ValueErrorCon
 	}()
 
 	return func(ctx context.Context) (T, error) {
+		// A result that is already there is handed over regardless of ctx.
+		// The work is done and handing it over costs nothing, so a caller
+		// that has given up waiting still gets the value. Checked first and
+		// non-blocking, otherwise the select below would pick between the
+		// two ready cases at random.
+		select {
+		case <-ready:
+			return res, err
+		default:
+		}
+
+		// Nothing cached yet, so the context governs the wait: whichever
+		// happens first wins.
 		select {
 		case <-ready:
 			return res, err

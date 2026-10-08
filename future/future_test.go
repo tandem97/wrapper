@@ -210,3 +210,65 @@ func TestWrapSlowFuncContextResultCachedAfterCancellation(t *testing.T) {
 		t.Fatalf("got (%v, %v), want (42, nil)", res, err)
 	}
 }
+
+// A cached result is handed over even when the caller's context is already
+// done: the work is finished and there is nothing to wait for. The choice
+// must be ordered, not a coin flip between two ready select cases.
+func TestWrapSlowFuncContextReturnsCachedResultDespiteCancelledContext(t *testing.T) {
+	w := WrapSlowFuncContext(func() (string, error) { return "ok", nil })
+
+	// Let the run finish.
+	if _, err := w(context.Background()); err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Every call must see the cached result, not the context error.
+	for i := 0; i < 1000; i++ {
+		res, err := w(ctx)
+		if err != nil {
+			t.Fatalf("call %d: got %v, want the cached result", i+1, err)
+		}
+
+		if res != "ok" {
+			t.Fatalf("call %d: got %q, want %q", i+1, res, "ok")
+		}
+	}
+}
+
+// While the run is still in progress a cancelled context does come back,
+// so the guarantee above is not reached by giving up too early.
+func TestWrapSlowFuncContextHonoursCancelledContextWhileRunning(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	w := WrapSlowFuncContext(func() (string, error) {
+		close(started)
+		<-release
+
+		return "ok", nil
+	})
+
+	<-started
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := w(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got (%q, %v), want context.Canceled while f is running", res, err)
+	}
+
+	if res != "" {
+		t.Fatalf("got %q, want the zero value", res)
+	}
+
+	// The result is still cached once it lands.
+	close(release)
+
+	if _, err := w(context.Background()); err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+}
