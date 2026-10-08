@@ -2,9 +2,13 @@
 // module builds on.
 //
 // A wrapper takes one of these functions and returns a function of the
-// same shape, so wrappers compose freely. Plain functions adapt to the
-// context-aware form automatically via ValueErrorContext, keeping
-// wrapping and composing to a single line.
+// same shape, so wrappers compose freely. ValueError and Void adapt to the
+// context-aware form via ValueErrorContext, keeping wrapping and composing to
+// a single line. That method belongs to the named type, so a function literal
+// needs the conversion first:
+//
+//	fetch := func() (string, error) { return call() }
+//	adapted := effector.ValueError[string](fetch).ValueErrorContext()
 //
 // The package also declares the Backoff contract consumed by retry and
 // circuitbreaker, and the optional Cloneable extension implemented by
@@ -79,7 +83,8 @@ func (f Void) ValueErrorContext() ValueErrorContext[struct{}] {
 }
 
 // ValueErrorContext adapts f to the context-aware form: the returned
-// function ignores ctx and calls f.
+// function ignores ctx and calls f. It is a method on ValueError, not on the
+// underlying func, so a function literal has to be converted first.
 func (f ValueError[T]) ValueErrorContext() ValueErrorContext[T] {
 	return func(ctx context.Context) (T, error) {
 		return f()

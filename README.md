@@ -26,13 +26,15 @@ res, err = myFunc()               // same call, resilient now
 - **Composable** — wrappers have identical signatures and stack in any order.
 - **Concurrent-safe** — every wrapper keeps its own state internally and may be
   reused across goroutines.
-- **Per-session backoff** — retry clones the generator on every call, so
-  concurrent retry sessions escalate independently instead of sharing one
-  sequence position.
+- **Per-session backoff** — once a retry is needed, `retry` escalates on a
+  private clone of the generator, so concurrent retry sessions do not share one
+  sequence position. A call that succeeds first pays nothing for the clone.
 - **Fail-fast sentinel errors** — `ErrServiceUnreachable`, `ErrDebounce`,
   `ErrTooManyCalls`.
 - **Context-aware variants** — every wrapper has a `*Context` version that
-  passes your `context.Context` through and respects cancellation.
+  passes your `context.Context` through and respects cancellation. `timeout` is
+  the one exception: `timeout.Timeout` is itself the entry point that lifts a
+  context-free function into a context-aware one.
 - **Deterministic backoff** — `exponentialjitter.WithSeed` makes jittered
   sequences reproducible; `Clone` reproduces a session on demand.
 
@@ -86,12 +88,29 @@ type ValueError[T any]        func() (T, error)                // plain
 type Void                     func()                           // side-effect only
 ```
 
-Plain functions adapt to the context-aware form automatically via
-`.ValueErrorContext()`, so wrapping and composing is always one line:
+`ValueError` and `Void` adapt to the context-aware form via
+`.ValueErrorContext()`, so wrapping and composing is one line. The method
+belongs to the named type, so a function literal needs the conversion first —
+`fetch.ValueErrorContext()` on a bare `func()` literal does not compile:
 
 ```go
+fetch := func() (string, error) { return call() }
+
 backoff := exponential.New(exponential.WithBase(100 * time.Millisecond))
-wrapped := retry.RetryContext(circuit.ValueErrorContext(), 4, backoff)
+wrapped := retry.RetryContext(
+    effector.ValueError[string](fetch).ValueErrorContext(), 4, backoff,
+)
+```
+
+`Void` covers the case of a side-effect-only function, `func()`, which is the
+one shape that returns nothing. Adapting it yields `ValueErrorContext[struct{}]`,
+so a wrapped `Void` reports a `struct{}{}` result alongside the error:
+
+```go
+notify := effector.Void(func() { sendEmail() })
+wrapped := throttle.ThrottleContext(refillCtx, notify.ValueErrorContext(), 10, 10, time.Second)
+
+_, err := wrapped(ctx) // struct{}{}, err
 ```
 
 ## Packages
@@ -191,10 +210,11 @@ Two flavours of debounce:
   that run and inherit its outcome — including `context.Canceled` if the
   initiating caller was cancelled, even though their own context is live.
 - **`DebounceLast`** (trailing edge): the circuit runs only after a quiet
-  period of `d`; calls superseded by newer ones receive `ErrDebounce`. A
-  circuit that had already started is not superseded — it runs to completion
-  and its caller gets the result, so the wrapper can hold the circuit in
-  flight for two callers at once. Make the circuit safe for concurrent use.
+  period of `d`. A call superseded by a newer one *before its circuit could
+  start* receives `ErrDebounce`; a circuit that had already started is not
+  superseded — it runs to completion and its caller gets the result, so the
+  wrapper can hold the circuit in flight for two callers at once. Make the
+  circuit safe for concurrent use.
 
 ```go
 import (
@@ -278,6 +298,10 @@ Starts a slow function immediately in a background goroutine and caches its
 result. The first call blocks until the function returns; subsequent calls
 return the cached result instantly.
 
+The function it wraps takes no context, so the context only bounds the *wait*:
+the work always runs to completion. A cached result is returned even when the
+context is already cancelled — there is nothing left to wait for.
+
 ```go
 import (
 	"github.com/tandem97/wrapper/future"
@@ -316,9 +340,9 @@ type Cloneable interface {
 }
 ```
 
-`retry` clones the generator on every call, so you can pass one instance and
-call the wrapper from as many goroutines as you like. To drive a generator
-yourself, clone per session.
+Once a retry is needed, `retry` escalates on a private clone, so you can pass one
+instance and call the wrapper from as many goroutines as you like. To drive a
+generator yourself, clone per session.
 
 **`exponential`** — deterministic `base → ×2 → cap`:
 
@@ -333,8 +357,8 @@ bo.Reset()   // back to 100ms
 ```
 
 `cap` is a hard bound: `Backoff()` never returns more than it, and the sequence
-reaches `cap` exactly rather than skipping over it. Build generators with `New`:
-the zero value is not usable, as both types are exported.
+reaches `cap` exactly rather than skipping over it. Always build generators with
+`New` — the exported zero value is not usable.
 
 **`exponentialjitter`** — configurable multiplier and random spread in
 `[1-jitter, 1+jitter)` around the curve, so a fleet of clients does not retry
@@ -361,7 +385,7 @@ Two differences from `exponential` are worth keeping in mind:
 | --- | --- | --- |
 | Bound | `cap` is a hard maximum, never exceeded | `ceiling` bounds the un-jittered curve; the returned delay may reach `ceiling*(1+jitter)` |
 | First delay | always exactly `base` | jittered, so it may be below `base` |
-| Unusable zero value | returns `0` forever | panics |
+| Unusable zero value | returns `0` forever | panics on a nil dereference |
 
 `WithSeed(seed1, seed2)` makes every new generator with the same configuration
 produce the same delay sequence, which is what tests need. The two values mirror
@@ -381,7 +405,9 @@ The sequence stays monotonic either way.
 
 Both are concurrent-safe. Invalid configuration panics at construction; in
 `exponentialjitter` that includes a `ceiling` above `MaxCeiling` (~104 days),
-above which the nanosecond level would lose precision.
+above which the nanosecond level would lose precision. That is a separate matter
+from the zero value, which has no random source and so faults on first use
+rather than reporting a readable message.
 
 ## Composing wrappers
 
@@ -440,46 +466,70 @@ the one below it, so the semantics stay predictable.
 
 ## Guarantees and conventions
 
+These hold across the whole module.
+
 - **Invalid configuration panics at construction** (e.g. non-positive durations
   or zero bounds), so mistakes surface at startup, not in production traffic.
-- **A backoff generator holds one sequence position.** `retry` resets it once a
-  call has waited on it, so it is reusable; a call that never waits leaves it
-  alone. `retry` also clones the generator on the first failed attempt, so
-  concurrent sessions do not share a position. A generator without `Clone` is
-  shared and belongs to one wrapper at a time.
-- **`MinBase` bounds the configured base, not the returned delay.** With
-  `jitter > 0` a generator built with `base == MinBase` returns delays below
-  `MinBase`.
-- **Context-aware wrappers expect the wrapped function to respect the context**:
-  retries, debounce and the breaker rely on the wrapped call observing
-  cancellation in a timely manner.
+- **Wrapped functions may be reused across calls and are safe for concurrent
+  use.** Wrappers keep their own state internally, so one wrapper can be shared
+  across goroutines.
+- **Panics inside a wrapped function crash the process** — wrappers never
+  swallow them.
+- **Context-aware wrappers expect the wrapped function to respect the
+  context**: retries, debounce and the breaker rely on the wrapped call
+  observing cancellation in a timely manner.
 - **A call with an already cancelled context returns `ctx.Err()` immediately**
   without invoking the wrapped function (`retry`, `debounce`, `timeout`,
   `throttle`) and, for `throttle`, without spending a token.
-  `future` is the exception: a result that is already cached is returned even
-  then, because there is nothing left to wait for, and the context bounds the
-  wait rather than the work.
 - **Context errors are not circuit failures**: `circuitbreaker` passes
   `context.Canceled`/`context.DeadlineExceeded` through without counting them.
-- **Panics inside a wrapped function crash the process** — wrappers never
-  swallow them.
-- Wrapped functions may be reused across calls and are safe for concurrent
-  use. Wrappers keep their own state internally; the only external piece is
-  the backoff you provide — use the bundled generators, which are
-  concurrent-safe and clonable.
+
+### Exceptions worth knowing
+
+Four wrappers deviate from the rules above. Each is described in full in its own
+section.
+
+- [`future`](#future) hands back an already cached result even for a cancelled
+  context, and its context bounds the wait rather than the work: the function it
+  wraps takes no context and runs to completion.
+- [`circuitbreaker`](#circuitbreaker) is not an admission controller. `threshold`
+  counts consecutive *completed* failures, so a concurrent burst reaches the
+  circuit in full.
+- [`debounce`](#debounce) shares one run per window, so the circuit runs under
+  the context of whichever caller opened that window.
+- [`throttle`](#throttle) stops throttling for good once `refillCtx` is
+  cancelled: the bucket never fills again.
+
+### Backoff generators
+
+Both generators in [`backoff`](backoff) expose `MinBase`, and both bound the
+*configured* base rather than the returned delay — with `jitter > 0` a generator
+built with `base == MinBase` returns delays below `MinBase`.
+
+A generator holds one sequence position, so it must not be shared between
+concurrent retry sessions. `retry` clones it on the first failed attempt, which
+covers the bundled generators. If you supply your own `Backoff` without
+`Clone`, it is shared and belongs to one retry wrapper at a time. Use the
+bundled generators where you can: they are concurrent-safe and clonable.
 
 ## Testing
 
-Every package ships with unit tests, and every wrapper has a runnable
-`go test` example (`Example*`):
+Every package ships with unit tests and a runnable `go test` example:
 
 ```sh
 go test ./...
+go test -race ./...   # the wrappers are all concurrency-sensitive
 ```
 
-The backoff generators also carry benchmarks, which is where the atomic
-sequence in `exponential` shows up: `Backoff` costs ~1.7 ns and ~0.4 ns on eight
-cores, against ~26 ns and ~240 ns for a mutex-protected sequence.
+The backoff generators carry benchmarks, which is where the atomic sequence in
+`exponential` shows up next to a mutex-protected one:
+
+```sh
+go test -bench . ./backoff/...
+```
+
+Absolute numbers depend on the machine, so take the ratio from your own run
+rather than from any figure quoted here.
 
 ## License
 
