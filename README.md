@@ -150,9 +150,21 @@ with `ErrServiceUnreachable` without invoking the circuit. After the backoff
 delay elapses, a single probe request is allowed through (half-open state). A
 successful probe resets the breaker; a failed one re-opens it.
 
+A `threshold` of `0` opens the breaker after the first failure. Until something
+has failed the breaker is closed and every call passes through, so concurrent
+calls are not serialised and never see a spurious `ErrServiceUnreachable`.
+
 Context errors (`context.Canceled`, `context.DeadlineExceeded`) returned by the
 circuit are passed through to the caller but are **not** counted as failures —
-caller cancellations cannot open the breaker.
+caller cancellations cannot open the breaker. A cancelled probe re-arms the
+open window, since it yielded no information about the circuit.
+
+`threshold` bounds how many consecutive completed failures it takes to open the
+breaker — it is not a limit on calls in flight. A burst of concurrent calls
+reaches the circuit in full while none of them has completed, so the breaker is
+not an admission controller. Two further consequences of that design: a success
+returned by a call that started before the breaker opened re-closes it, and a
+probe that never returns leaves every call failing fast until it does.
 
 ```go
 import (
