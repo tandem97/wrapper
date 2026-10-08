@@ -219,6 +219,12 @@ consumes one token; calls that find the bucket empty fail fast with
 `ErrTooManyCalls`. A background goroutine refills the bucket by `refill` tokens
 every `d` (up to `max`) and stops when `refillCtx` is cancelled.
 
+Cancelling `refillCtx` does not pause the refill, it ends it: the bucket never
+fills again, so once the initial `max` tokens are spent every call returns
+`ErrTooManyCalls`. Keep `refillCtx` alive for as long as the throttler is in
+use — a `defer stop()` in a setup function will switch the throttler off when
+that function returns. A throttler that is never called starts no goroutine.
+
 ```go
 import (
 	"context"
@@ -448,7 +454,8 @@ the one below it, so the semantics stay predictable.
   retries, debounce and the breaker rely on the wrapped call observing
   cancellation in a timely manner.
 - **A call with an already cancelled context returns `ctx.Err()` immediately**
-  without invoking the wrapped function (`retry`, `debounce`, `timeout`).
+  without invoking the wrapped function (`retry`, `debounce`, `timeout`,
+  `throttle`) and, for `throttle`, without spending a token.
   `future` is the exception: a result that is already cached is returned even
   then, because there is nothing left to wait for, and the context bounds the
   wait rather than the work.

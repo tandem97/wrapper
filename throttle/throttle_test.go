@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -236,5 +237,121 @@ func TestThrottleContextPassesContext(t *testing.T) {
 
 	if c := <-got; c != ctx {
 		t.Fatal("effector did not receive the provided context")
+	}
+}
+
+// A caller that has already given up must neither spend a token nor start
+// the circuit, matching every other context-aware wrapper in the module.
+func TestThrottleContextCancelledContextSpendsNothing(t *testing.T) {
+	refillCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	var calls atomic.Int32
+
+	throttled := ThrottleContext(refillCtx,
+		func(context.Context) (int, error) {
+			calls.Add(1)
+
+			return 1, nil
+		}, 2, 1, time.Hour)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for i := 0; i < 5; i++ {
+		res, err := throttled(ctx)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("call %d: got (%v, %v), want context.Canceled", i+1, res, err)
+		}
+	}
+
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("circuit invoked %d times, want 0", got)
+	}
+
+	// The bucket is untouched, so all of max is still available.
+	admitted := 0
+
+	for i := 0; i < 2; i++ {
+		if _, err := throttled(context.Background()); err == nil {
+			admitted++
+		}
+	}
+
+	if admitted != 2 {
+		t.Fatalf("admitted %d calls after the cancelled ones, want 2", admitted)
+	}
+
+	// And it is now drained.
+	if _, err := throttled(context.Background()); !errors.Is(err, ErrTooManyCalls) {
+		t.Fatalf("got %v, want ErrTooManyCalls", err)
+	}
+}
+
+// A throttler that only ever sees cancelled contexts must not start the
+// refill goroutine.
+func TestThrottleContextCancelledContextStartsNoGoroutine(t *testing.T) {
+	refillCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	throttled := ThrottleContext(refillCtx,
+		func(context.Context) (int, error) { return 1, nil }, 1, 1, time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := throttled(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context.Canceled", err)
+	}
+
+	// The bucket still holds its single token, which it would not if the
+	// refill goroutine had started and ticked.
+	time.Sleep(20 * time.Millisecond)
+
+	if _, err := throttled(context.Background()); err != nil {
+		t.Fatalf("got %v, want the token to still be there", err)
+	}
+}
+
+// The ordinary case: a partial refill grows the bucket back to max one token
+// at a time, and stops there. No existing test covered the non-saturating
+// branch of the refill.
+func TestThrottlePartialRefillClimbsToMax(t *testing.T) {
+	refillCtx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	var calls atomic.Int32
+
+	throttled := ThrottleContext(refillCtx,
+		func(context.Context) (int, error) {
+			calls.Add(1)
+
+			return 1, nil
+		}, 10, 1, 5*time.Millisecond)
+
+	// Drain the bucket.
+	for i := 0; i < 10; i++ {
+		if _, err := throttled(context.Background()); err != nil {
+			t.Fatalf("call %d: %v", i+1, err)
+		}
+	}
+
+	if _, err := throttled(context.Background()); !errors.Is(err, ErrTooManyCalls) {
+		t.Fatalf("got %v, want ErrTooManyCalls on a drained bucket", err)
+	}
+
+	// Long enough for more refills than the bucket can hold.
+	time.Sleep(150 * time.Millisecond)
+
+	admitted := 0
+
+	for i := 0; i < 20; i++ {
+		if _, err := throttled(context.Background()); err == nil {
+			admitted++
+		}
+	}
+
+	if admitted != 10 {
+		t.Fatalf("admitted %d calls after refilling, want 10: the bucket must top out at max", admitted)
 	}
 }

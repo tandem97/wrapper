@@ -24,6 +24,9 @@ var ErrTooManyCalls = errors.New("too many calls")
 // full with max tokens, refill tokens are added every d up to max, and
 // calls that find the bucket empty return ErrTooManyCalls without
 // invoking the circuit.
+//
+// Cancelling refillCtx ends the refill for good, leaving the bucket to
+// drain: see ThrottleContext.
 func Throttle[T any](refillCtx context.Context, effector effector.ValueError[T], max uint, refill uint, d time.Duration) effector.ValueError[T] {
 	throttle := ThrottleContext(refillCtx, effector.ValueErrorContext(), max, refill, d)
 
@@ -37,6 +40,15 @@ func Throttle[T any](refillCtx context.Context, effector effector.ValueError[T],
 // added every d up to max, and calls that find the bucket empty return
 // ErrTooManyCalls without invoking the circuit. The bucket is refilled by
 // a background goroutine that stops when refillCtx is cancelled.
+//
+// Cancelling refillCtx does not pause the refill, it ends it: the bucket
+// never fills again, so once the initial max tokens are spent every call
+// returns ErrTooManyCalls. Keep refillCtx alive for as long as the
+// throttler is in use, and scope it deliberately. A throttler that is
+// never called at all starts no goroutine.
+//
+// A call with an already cancelled context returns ctx.Err() without
+// spending a token and without invoking the circuit.
 //
 // It panics if d is not positive or if max or refill is zero.
 func ThrottleContext[T any](refillCtx context.Context, effector effector.ValueErrorContext[T], max uint, refill uint, d time.Duration) effector.ValueErrorContext[T] {
@@ -59,6 +71,15 @@ func ThrottleContext[T any](refillCtx context.Context, effector effector.ValueEr
 	)
 
 	return func(ctx context.Context) (res T, err error) {
+		// Checked before the token is spent, like every other
+		// context-aware wrapper in the module: a caller that has already
+		// given up must neither consume capacity nor start the circuit.
+		// The check also precedes the goroutine, so a throttler that only
+		// ever sees cancelled contexts never starts one.
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
+
 		once.Do(func() {
 			go func() {
 				ticker := time.NewTicker(d)
