@@ -27,15 +27,14 @@ import (
 )
 
 // Backoff supplies delays between failed attempts and can be restarted
-// with Reset after a successful probe.
-type Backoff interface {
-	// Backoff returns the delay until the next probe is allowed
-	Backoff() time.Duration
-
-	// Reset restarts the sequence so that the next Backoff call returns
-	// the initial delay.
-	Reset()
-}
+// with Reset after a successful probe. It is an alias for
+// effector.Backoff, the same contract retry uses, so a single generator
+// satisfies every consumer in the module.
+//
+// A breaker calls Backoff once per open period and Reset once per
+// successful probe, both under its own lock, so one generator per breaker
+// is enough: there is no per-call session to isolate.
+type Backoff = effector.Backoff
 
 // ErrServiceUnreachable is returned by an open breaker instead of calling
 // the wrapped circuit.

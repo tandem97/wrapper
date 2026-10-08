@@ -4,11 +4,17 @@
 // base and doubling on every step until the value reaches cap, after
 // which cap is returned for every subsequent call. It is typically used
 // to space out retries of failed operations.
+//
+// A generator carries the position in its sequence, so concurrent retry
+// sessions must not share one instance. Use Clone to obtain an
+// independent generator for each session.
 package exponential
 
 import (
-	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/tandem97/wrapper/effector"
 )
 
 const (
@@ -24,12 +30,16 @@ const (
 	DefaultCap = 30 * time.Second
 )
 
-// Backoff is a concurrent-safe exponential backoff generator.
+// Backoff is a concurrent-safe exponential backoff generator. The
+// sequence position is advanced atomically, so Backoff needs no lock.
+//
+// A Backoff must be built with New. The zero value is not usable: it has
+// no cap, so Backoff returns 0 on every call, which turns a retry loop
+// into a busy loop rather than reporting the mistake.
 type Backoff struct {
-	base    time.Duration
-	cap     time.Duration
-	backoff time.Duration
-	mu      sync.Mutex
+	base time.Duration
+	cap  time.Duration
+	cur  atomic.Int64
 }
 
 // Opt configures a Backoff created by New.
@@ -79,7 +89,7 @@ func New(opts ...Opt) *Backoff {
 		panic("exponential: cap must be greater than or equal to base")
 	}
 
-	backoff.backoff = backoff.base
+	backoff.cur.Store(int64(backoff.base))
 
 	return backoff
 }
@@ -88,36 +98,46 @@ func New(opts ...Opt) *Backoff {
 // generator. With the default options the sequence is 1s, 2s, 4s, 8s,
 // 16s, followed by cap (30s) forever.
 //
-// Backoff is safe for concurrent use.
+// Backoff is safe for concurrent use: the sequence position is advanced
+// with a compare-and-swap, so concurrent callers each receive a
+// distinct step of the sequence. Sharing one generator between
+// concurrent retry sessions is not meaningful regardless, as each
+// session advances the position and Reset rewinds it for all of them;
+// use Clone for per-session isolation.
 func (b *Backoff) Backoff() time.Duration {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	cap := int64(b.cap)
 
-	backoff := b.backoff
-	if backoff >= b.cap {
-		return b.cap
+	for {
+		cur := b.cur.Load()
+
+		if cur >= cap {
+			return b.cap
+		}
+
+		next := cur << 1
+
+		// If the doubling overflows int64 (next < cur for positive
+		// values) or overshoots cap, the sequence has saturated: pin the
+		// state at cap and still return the last representable value
+		// instead of cap. The condition is evaluated before the
+		// assignment, so it still sees the doubled value.
+		if next < cur || next >= cap {
+			next = cap
+		}
+
+		if b.cur.CompareAndSwap(cur, next) {
+			return time.Duration(cur)
+		}
 	}
-
-	next := backoff << 1
-
-	// If the doubling overflows int64 (next < backoff for positive
-	// values) or overshoots cap, the sequence has saturated: pin the
-	// state at cap and still return the last representable value
-	// instead of cap.
-	if next < backoff || next >= b.cap {
-		b.backoff = b.cap
-	} else {
-		b.backoff = next
-	}
-
-	return backoff
 }
 
 // Reset restarts the sequence so that the next call to Backoff returns
 // base again.
-func (b *Backoff) Reset() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+func (b *Backoff) Reset() { b.cur.Store(int64(b.base)) }
 
-	b.backoff = b.base
+// Clone returns an independent copy of the generator with the same
+// configuration, positioned at the start of a fresh sequence. The
+// original is left untouched.
+func (b *Backoff) Clone() effector.Backoff {
+	return New(WithBase(b.base), WithCap(b.cap))
 }

@@ -4,7 +4,7 @@
 
 Resilience wrappers for your functions.
 
-`wrapper` is a small, dependency-free Go library (1.20+, generics) that wraps
+`wrapper` is a small, dependency-free Go library (1.22+, generics) that wraps
 any function with retries, circuit breaking, debounce, throttling, timeouts and
 more — without ever making you rewrite that function.
 
@@ -26,12 +26,15 @@ res, err = myFunc()               // same call, resilient now
 - **Composable** — wrappers have identical signatures and stack in any order.
 - **Concurrent-safe** — every wrapper keeps its own state internally and may be
   reused across goroutines.
+- **Per-session backoff** — retry clones the generator on every call, so
+  concurrent retry sessions escalate independently instead of sharing one
+  sequence position.
 - **Fail-fast sentinel errors** — `ErrServiceUnreachable`, `ErrDebounce`,
   `ErrTooManyCalls`.
 - **Context-aware variants** — every wrapper has a `*Context` version that
   passes your `context.Context` through and respects cancellation.
 - **Deterministic backoff** — `exponentialjitter.WithSeed` makes jittered
-  sequences reproducible.
+  sequences reproducible; `Clone` reproduces a session on demand.
 
 ## Installation
 
@@ -110,8 +113,14 @@ wrapped := retry.RetryContext(circuit.ValueErrorContext(), 4, backoff)
 ### retry
 
 Retries a call until it succeeds or the attempts are exhausted, waiting
-`backoff.Backoff()` between failed attempts. The backoff is reset after every
-call, so each retry session starts from a clean state.
+`backoff.Backoff()` between failed attempts. Once a call has waited at least
+once, the backoff is reset before the wrapper returns, so it is reusable. A call
+that never waits leaves it untouched.
+
+The generator is cloned lazily, on the first failed attempt — a call that
+succeeds immediately costs nothing. Concurrent calls therefore escalate
+independently. A backoff without `Clone` is shared instead of copied, so give it
+to one retry wrapper at a time.
 
 ```go
 import (
@@ -261,7 +270,8 @@ res, err = wrappedCtx(ctx)
 ### backoff
 
 Both generators satisfy the tiny `Backoff` interface consumed by `retry` and
-`circuitbreaker`:
+`circuitbreaker`. It is declared once, in [`effector`](effector), and aliased by
+both wrappers:
 
 ```go
 type Backoff interface {
@@ -269,6 +279,21 @@ type Backoff interface {
 	Reset()                 // restart the sequence at its initial value
 }
 ```
+
+A generator carries the position in its sequence, so a single instance
+represents a single sequence and must not be shared between concurrent retry
+sessions. Bundled generators also satisfy `effector.Cloneable`:
+
+```go
+type Cloneable interface {
+	Backoff
+	Clone() Backoff // independent copy, starting from the base again
+}
+```
+
+`retry` clones the generator on every call, so you can pass one instance and
+call the wrapper from as many goroutines as you like. To drive a generator
+yourself, clone per session.
 
 **`exponential`** — deterministic `base → ×2 → cap`:
 
@@ -282,6 +307,10 @@ bo.Backoff() // 100ms, 200ms, 400ms, … capped at 10s
 bo.Reset()   // back to 100ms
 ```
 
+`cap` is a hard bound: `Backoff()` never returns more than it, and the sequence
+reaches `cap` exactly rather than skipping over it. Build generators with `New`:
+the zero value is not usable, as both types are exported.
+
 **`exponentialjitter`** — configurable multiplier and random spread in
 `[1-jitter, 1+jitter)` around the curve, so a fleet of clients does not retry
 in sync:
@@ -289,14 +318,45 @@ in sync:
 ```go
 bo := exponentialjitter.New(
 	exponentialjitter.WithBase(100*time.Millisecond),
-	exponentialjitter.WithCap(10*time.Second),
+	exponentialjitter.WithCeiling(10*time.Second),
 	exponentialjitter.WithMultiplier(2),
 	exponentialjitter.WithJitter(0.2),
-	exponentialjitter.WithSeed(42), // optional: deterministic sequence
+	exponentialjitter.WithSeed(42, 1), // optional: deterministic sequence
 )
 ```
 
-Both are concurrent-safe. Invalid configuration panics at construction.
+Keep jitter small (`0.1`–`0.3`). As it approaches `1` the spread becomes
+one-sided and delays degenerate towards `Uniform[0, 2·level)`, so callers retry
+almost immediately and the storms jitter is meant to prevent come back.
+`jitter` must be within `[0, 1)`.
+
+Two differences from `exponential` are worth keeping in mind:
+
+| | `exponential` | `exponentialjitter` |
+| --- | --- | --- |
+| Bound | `cap` is a hard maximum, never exceeded | `ceiling` bounds the un-jittered curve; the returned delay may reach `ceiling*(1+jitter)` |
+| First delay | always exactly `base` | jittered, so it may be below `base` |
+| Unusable zero value | returns `0` forever | panics |
+
+`WithSeed(seed1, seed2)` makes every new generator with the same configuration
+produce the same delay sequence, which is what tests need. The two values mirror
+`rand.NewPCG`: pass two distinct ones for the full 128 bits of state, so
+independently seeded generators do not walk the same sequence. It does not make
+`Reset` reproducible: `Reset` rewinds the curve but continues the random stream,
+so a reset generator diverges from a newly created one. Use `Clone` to get a
+reproducible session. The generator draws from a PCG source, whose output is not
+guaranteed across Go releases, so pin the toolchain when relying on exact
+delays.
+
+A `multiplier` of exactly `1` gives a flat sequence that never reaches
+`ceiling`, so `ceiling` has no effect. Values just above `1` grow slowly: near
+the precision limit a multiplier of `1.0000001` adds less than one nanosecond
+per step, so the curve emits runs of identical delays before it visibly moves.
+The sequence stays monotonic either way.
+
+Both are concurrent-safe. Invalid configuration panics at construction; in
+`exponentialjitter` that includes a `ceiling` above `MaxCeiling` (~104 days),
+above which the nanosecond level would lose precision.
 
 ## Composing wrappers
 
@@ -357,6 +417,14 @@ the one below it, so the semantics stay predictable.
 
 - **Invalid configuration panics at construction** (e.g. non-positive durations
   or zero bounds), so mistakes surface at startup, not in production traffic.
+- **A backoff generator holds one sequence position.** `retry` resets it once a
+  call has waited on it, so it is reusable; a call that never waits leaves it
+  alone. `retry` also clones the generator on the first failed attempt, so
+  concurrent sessions do not share a position. A generator without `Clone` is
+  shared and belongs to one wrapper at a time.
+- **`MinBase` bounds the configured base, not the returned delay.** With
+  `jitter > 0` a generator built with `base == MinBase` returns delays below
+  `MinBase`.
 - **Context-aware wrappers expect the wrapped function to respect the context**:
   retries, debounce and the breaker rely on the wrapped call observing
   cancellation in a timely manner.
@@ -370,16 +438,20 @@ the one below it, so the semantics stay predictable.
 - Wrapped functions may be reused across calls and are safe for concurrent
   use. Wrappers keep their own state internally; the only external piece is
   the backoff you provide — use the bundled generators, which are
-  concurrent-safe.
+  concurrent-safe and clonable.
 
 ## Testing
 
-Most packages ship with unit tests, and every wrapper has a runnable
-`go test` example (`Example*`); `effector` only defines types:
+Every package ships with unit tests, and every wrapper has a runnable
+`go test` example (`Example*`):
 
 ```sh
 go test ./...
 ```
+
+The backoff generators also carry benchmarks, which is where the atomic
+sequence in `exponential` shows up: `Backoff` costs ~1.7 ns and ~0.4 ns on eight
+cores, against ~26 ns and ~240 ns for a mutex-protected sequence.
 
 ## License
 
