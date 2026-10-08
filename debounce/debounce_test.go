@@ -350,61 +350,211 @@ func TestDebounceLastContextCancelledAtEntry(t *testing.T) {
 	}
 }
 
-func TestDebounceLastSupersededCircuitCancelled(t *testing.T) {
+// A circuit that has not started yet is superseded: the timer is stopped
+// and the waiting caller receives ErrDebounce. The circuit never runs for
+// it at all, which is the point of trailing-edge debounce.
+func TestDebounceLastSupersededBeforeStartNeverRuns(t *testing.T) {
+	type callerKey struct{}
+
 	var (
-		started     = make(chan struct{})
-		gotCancel   = make(chan error, 1)
-		mu          sync.Mutex
-		invocations int
-		circuit     = func(ctx context.Context) (int, error) {
+		mu      sync.Mutex
+		ranFor  = map[string]int{}
+		circuit = func(ctx context.Context) (int, error) {
+			who, _ := ctx.Value(callerKey{}).(string)
+
 			mu.Lock()
-			invocations++
-			first := invocations == 1
+			ranFor[who]++
 			mu.Unlock()
 
-			if !first {
-				return 1, nil
-			}
-
-			close(started)
-
-			<-ctx.Done()
-
-			gotCancel <- ctx.Err()
-
-			return 0, ctx.Err()
+			return 1, nil
 		}
-		d         = DebounceLastContext(circuit, 10*time.Millisecond)
-		firstDone = make(chan struct{})
+		d = DebounceLastContext(circuit, 50*time.Millisecond)
 	)
 
-	go func() {
-		defer close(firstDone)
-
-		_, _ = d(context.Background())
-	}()
-
-	// Wait until the first circuit is running, then supersede it.
-	<-started
-
-	secondDone := make(chan struct{})
-
-	go func() {
-		defer close(secondDone)
-
-		_, _ = d(context.Background())
-	}()
-
-	// The superseded circuit must observe the cancellation.
-	select {
-	case err := <-gotCancel:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("got %v, want context.Canceled", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("superseded circuit was not cancelled")
+	ctx := func(who string) context.Context {
+		return context.WithValue(context.Background(), callerKey{}, who)
 	}
 
-	<-firstDone
+	firstDone := make(chan error, 1)
+
+	go func() {
+		_, err := d(ctx("superseded"))
+		firstDone <- err
+	}()
+
+	// Supersede it well before the timer fires.
+	time.Sleep(10 * time.Millisecond)
+
+	go func() { _, _ = d(ctx("winner")) }()
+
+	select {
+	case err := <-firstDone:
+		if !errors.Is(err, ErrDebounce) {
+			t.Fatalf("got %v, want ErrDebounce", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("superseded caller never returned")
+	}
+
+	// Past the original deadline, its circuit must still not have run.
+	time.Sleep(80 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if ranFor["superseded"] != 0 {
+		t.Fatalf("circuit ran %d times for the superseded caller, want 0", ranFor["superseded"])
+	}
+
+	if ranFor["winner"] != 1 {
+		t.Fatalf("circuit ran %d times for the surviving caller, want 1", ranFor["winner"])
+	}
+}
+
+// A circuit that has already started is left to finish: its caller gets
+// the result, not ErrDebounce. Throwing away work in progress would mean a
+// circuit slower than the gap between calls never completes.
+func TestDebounceLastRunningCircuitIsNotCancelled(t *testing.T) {
+	var (
+		started   = make(chan struct{})
+		release   = make(chan struct{})
+		mu        sync.Mutex
+		runnings  int
+		inFlight  int
+		maxFlight int
+		circuit   = func(ctx context.Context) (int, error) {
+			mu.Lock()
+			runnings++
+
+			if inFlight++; inFlight > maxFlight {
+				maxFlight = inFlight
+			}
+
+			first := runnings == 1
+			mu.Unlock()
+
+			if first {
+				close(started)
+			}
+
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+
+			mu.Lock()
+			inFlight--
+			mu.Unlock()
+
+			return 1, nil
+		}
+		d = DebounceLastContext(circuit, 10*time.Millisecond)
+	)
+
+	// The first call runs its circuit, which blocks until released.
+	firstDone := make(chan error, 1)
+
+	go func() {
+		_, err := d(context.Background())
+		firstDone <- err
+	}()
+
+	<-started // the trailing circuit is now in flight
+
+	// A newer call supersedes it, but the circuit has already started.
+	secondDone := make(chan error, 1)
+
+	go func() {
+		_, err := d(context.Background())
+		secondDone <- err
+	}()
+
+	// Give the newer call time to reach the debounce and try to cancel.
+	time.Sleep(50 * time.Millisecond)
+
+	close(release) // let the in-flight circuit finish
+
+	// The running circuit delivers its result rather than ErrDebounce.
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("got %v, want the running circuit to finish with its result", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the running circuit was cancelled instead of being allowed to finish")
+	}
+
 	<-secondDone
+}
+
+// A caller that is waiting on someone else's run can still give up: it
+// returns its own context error while the run carries on for the caller
+// that started it. This is the one case where a caller's own context is
+// honoured after the window is open.
+func TestDebounceFirstWaiterCanAbandon(t *testing.T) {
+	var (
+		started = make(chan struct{})
+		release = make(chan struct{})
+
+		circuit = func(ctx context.Context) (int, error) {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+
+			select {
+			case <-release:
+				return 7, nil
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			}
+		}
+
+		d = DebounceFirstContext(circuit, time.Minute)
+	)
+
+	// The initiator runs the circuit and stays with it.
+	initiator := make(chan error, 1)
+
+	go func() {
+		_, err := d(context.Background())
+		initiator <- err
+	}()
+
+	<-started
+
+	// A second caller waits on that run and gives up on its own context.
+	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
+
+	waiter := make(chan error, 1)
+
+	go func() {
+		_, err := d(waiterCtx)
+		waiter <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancelWaiter()
+
+	select {
+	case err := <-waiter:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiter got %v, want its own context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not give up on its own context")
+	}
+
+	// The run continues for the initiator.
+	close(release)
+
+	select {
+	case err := <-initiator:
+		if err != nil {
+			t.Fatalf("initiator got %v, want the circuit's result", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("initiator never returned")
+	}
 }

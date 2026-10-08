@@ -185,9 +185,16 @@ if err == circuitbreaker.ErrServiceUnreachable {
 Two flavours of debounce:
 
 - **`DebounceFirst`** (leading edge): the first call in a window executes the
-  circuit immediately; calls within `d` return the cached result.
+  circuit immediately; calls within `d` return the cached result. There is one
+  run per window, under the context of the caller that opened it, so that
+  context is the only way to cancel it. Callers that arrive later wait for
+  that run and inherit its outcome — including `context.Canceled` if the
+  initiating caller was cancelled, even though their own context is live.
 - **`DebounceLast`** (trailing edge): the circuit runs only after a quiet
-  period of `d`; calls superseded by newer ones receive `ErrDebounce`.
+  period of `d`; calls superseded by newer ones receive `ErrDebounce`. A
+  circuit that had already started is not superseded — it runs to completion
+  and its caller gets the result, so the wrapper can hold the circuit in
+  flight for two callers at once. Make the circuit safe for concurrent use.
 
 ```go
 import (
@@ -422,7 +429,7 @@ the one below it, so the semantics stay predictable.
 | Error | Raised by | Meaning |
 | --- | --- | --- |
 | `circuitbreaker.ErrServiceUnreachable` | circuit breaker | The circuit is open; the call was not invoked |
-| `debounce.ErrDebounce` | `DebounceLast` | The call was superseded by a newer call before it could run |
+| `debounce.ErrDebounce` | `DebounceLast` | The call was superseded by a newer call before its circuit could run |
 | `throttle.ErrTooManyCalls` | throttle | The token bucket was empty |
 
 ## Guarantees and conventions
